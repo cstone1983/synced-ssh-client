@@ -1,0 +1,30 @@
+services:
+  server:
+    build: .
+    image: sshsync-server:local
+    restart: unless-stopped
+    ports:
+      # Bound to loopback on purpose: the server speaks plain HTTP, so put a
+      # TLS reverse proxy, an SSH tunnel or WireGuard in front (see README).
+      # Change to "8080:8080" only if this port is reachable solely over a
+      # network you trust.
+      - "127.0.0.1:8080:8080"
+    environment:
+      SSHSYNC_DB_PATH: /data/sshsync.db
+      # Addresses of the reverse proxy as seen from inside the container
+      # (usually the Docker bridge gateway). Empty = ignore X-Forwarded-For.
+      SSHSYNC_TRUSTED_PROXIES: ""
+      SSHSYNC_RATE_LIMIT: "on"
+      SSHSYNC_CODE_TTL_SECONDS: "600"
+      SSHSYNC_LOG_LEVEL: INFO
+    volumes:
+      - sshsync-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  sshsync-data:

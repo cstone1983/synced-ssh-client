@@ -1,0 +1,17 @@
+.dart_tool/
+build/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+*.db-wal
+*.db-shm
+.idea/
+.vscode/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+*.jks
+*.keystore
+key.properties

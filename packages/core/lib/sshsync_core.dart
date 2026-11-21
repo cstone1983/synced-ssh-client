@@ -1,0 +1,11 @@
+export 'src/crypto/crypto.dart';
+export 'src/crypto/sodium_crypto.dart';
+export 'src/store/schema.dart';
+export 'src/store/store.dart';
+export 'src/sync/api.dart';
+export 'src/sync/engine.dart';
+export 'src/sync/hlc.dart';
+export 'src/sync/merge.dart';
+export 'src/util.dart';
+export 'src/vault/backup.dart';
+export 'src/vault/vault.dart';
