@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -32,9 +34,9 @@ android {
     // keyPassword) next to this folder's parent. Without it the build is
     // signed with the debug key, which is fine for trying it out but changes
     // per machine, so updates will not install over each other.
-    val keyProps = java.util.Properties().apply {
+    val keyProps = Properties().apply {
         val f = rootProject.file("key.properties")
-        if (f.exists()) f.inputStream().use { load(it) }
+        if (f.exists()) f.inputStream().use { stream -> load(stream) }
     }
     signingConfigs {
         if (keyProps.containsKey("storeFile")) {

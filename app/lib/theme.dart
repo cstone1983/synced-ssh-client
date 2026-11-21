@@ -33,6 +33,8 @@ ThemeData appTheme(bool dark) {
           onPrimary: Color(0xFF06281A),
           secondary: C.info,
           onSecondary: Color(0xFF04213A),
+          secondaryContainer: Color(0xFF1D3B33),
+          onSecondaryContainer: C.accent,
           surface: C.surface,
           onSurface: C.text,
           onSurfaceVariant: C.muted,

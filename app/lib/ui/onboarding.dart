@@ -433,7 +433,10 @@ class _JoinScreenState extends State<JoinScreen> {
                   SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: insecure,
-                      onChanged: (v) => setState(() => insecure = v),
+                      onChanged: (v) => setState(() {
+                        insecure = v;
+                        error = null;
+                      }),
                       title: const Text('Allow insecure LAN sync')),
                 ],
                 Align(
