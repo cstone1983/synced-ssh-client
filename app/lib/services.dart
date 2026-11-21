@@ -19,9 +19,17 @@ class App extends ChangeNotifier {
   final secure = SecureStore();
   late final SyncService sync = SyncService(this);
 
+  /// Sessions that were open when the app last stopped unexpectedly.
+  int interruptedSessions = 0;
+
   App._(this.crypto, this.vault, this.store, this.sessions) {
     store.changes.listen((_) => notifyListeners());
+    // If the previous run ended with sessions still open, the OS (or a
+    // crash) took them down. Remember that so the user can be told.
+    interruptedSessions = int.tryParse(store.kvGet('open_sessions') ?? '') ?? 0;
+    store.kvSet('open_sessions', '0');
     sessions.changes.listen((_) {
+      store.kvSet('open_sessions', '${sessions.activeCount}');
       SessionKeeper.update(sessions.activeCount);
       notifyListeners();
     });
@@ -72,10 +80,9 @@ class App extends ChangeNotifier {
     if (k == null) return false;
     try {
       vault.unlockWithKey(base64.decode(k));
-      // Prove the key is the right one before trusting it.
-      for (final r in store.list(RecordType.credential)) {
-        r.fields.length;
-      }
+      // Prove the stored key is this vault's key before trusting it.
+      final check = store.kvGet('key_check');
+      if (check != null) vault.openLocal('key_check', base64.decode(check));
     } catch (_) {
       vault.lock();
       return false;
@@ -85,6 +92,10 @@ class App extends ChangeNotifier {
   }
 
   void _afterUnlock() {
+    if (store.kvGet('key_check') == null) {
+      store.kvSet('key_check',
+          base64.encode(vault.sealLocal('key_check', utf8.encode('ok'))));
+    }
     _cacheSettings();
     sync.onUnlock();
     notifyListeners();

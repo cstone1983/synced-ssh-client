@@ -1,6 +1,6 @@
 # Synced SSH Client — Phase 1 Plan
 
-Status: **awaiting approval**. No code has been written.
+Status: **approved and built.** This is the design document. For what was actually built, how it was verified and where it deviates from this plan, see [STATUS.md](STATUS.md).
 Date: 2026-11-21
 
 Contents: [1 Pushback](#1-pushback-read-this-first) · [2 Architecture](#2-architecture) · [3 Packages](#3-packages) · [4 Data model](#4-data-model) · [5 Crypto](#5-crypto-design) · [6 Sync protocol](#6-sync-protocol) · [7 Server](#7-sync-server) · [8 Repo layout](#8-repo-layout) · [9 Phases](#9-phases) · [10 Testing](#10-testing) · [11 Decisions needed](#11-decisions-i-need-from-you)

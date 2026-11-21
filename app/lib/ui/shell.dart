@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:sshsync_core/sshsync_core.dart';
 
@@ -21,6 +23,25 @@ class _AppShellState extends State<AppShell> {
   final quickFocus = FocusNode();
 
   App get app => App.i;
+
+  @override
+  void initState() {
+    super.initState();
+    final n = app.interruptedSessions;
+    if (n > 0) {
+      app.interruptedSessions = 0;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          duration: const Duration(seconds: 10),
+          content: Text(Platform.isAndroid
+              ? 'Android stopped the app while $n SSH session${n == 1 ? ' was' : 's were'} open. '
+                  'Allowing unrestricted battery use in Settings makes this less likely.'
+              : 'The app closed while $n SSH session${n == 1 ? ' was' : 's were'} open.'),
+        ));
+      });
+    }
+  }
 
   void _newHost() => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const HostEditor()));
 
