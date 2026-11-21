@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.50.1"
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run pytest -q
+
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - uses: astral-sh/setup-uv@v5
+      - run: sudo apt-get update && sudo apt-get install -y putty-tools openssh-server
+      - name: Analyze and test (unit + two-client integration against the real server)
+        working-directory: packages/core
+        run: |
+          dart pub get
+          dart analyze
+          dart test -x ssh
+      - name: SSH tests against a local OpenSSH server
+        working-directory: packages/core
+        run: sudo env "PATH=$PATH" dart test -t ssh
+
+  server-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image and run the integration test against the container
+        run: |
+          docker build -t sshsync-server server
+          mkdir -p "$RUNNER_TEMP/data" && chmod 777 "$RUNNER_TEMP/data"
+          docker run -d --name sshsync -p 127.0.0.1:18080:8080 -v "$RUNNER_TEMP/data:/data" -e SSHSYNC_RATE_LIMIT=off sshsync-server
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:18080/healthz && break; sleep 1; done
+          docker logs sshsync 2>&1 | grep -oE '[A-HJKMNP-Z2-9]{5}-[A-HJKMNP-Z2-9]{5}' | head -1 > "$RUNNER_TEMP/code"
+          test -s "$RUNNER_TEMP/code"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - working-directory: packages/core
+        run: |
+          dart pub get
+          SSHSYNC_TEST_URL=http://127.0.0.1:18080 SSHSYNC_TEST_CODE="$(cat "$RUNNER_TEMP/code")" \
+            SSHSYNC_TEST_DB="$RUNNER_TEMP/data/sshsync.db" dart test -t integration
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - working-directory: app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+          flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sshsync-android-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - working-directory: app
+        run: |
+          flutter pub get
+          flutter build windows --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sshsync-windows
+          path: app/build/windows/x64/runner/Release
