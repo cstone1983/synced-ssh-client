@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
+import 'package:pointycastle/digests/sha256.dart';
 
 class ApiException implements Exception {
   final int status;
@@ -155,11 +156,12 @@ class HttpSyncApi implements SyncApi {
 
   /// An HTTP client that additionally trusts one certificate, identified by
   /// its SHA-256 fingerprint (hex), for self-signed homelab servers.
-  static http.Client pinnedClient(String sha256Hex, List<int> Function(List<int>) sha256) {
+  static http.Client pinnedClient(String sha256Hex) {
     final want = sha256Hex.toLowerCase().replaceAll(RegExp('[^0-9a-f]'), '');
     final inner = HttpClient()
       ..badCertificateCallback = (cert, host, port) {
-        final got = sha256(cert.der)
+        final got = SHA256Digest()
+            .process(Uint8List.fromList(cert.der))
             .map((b) => b.toRadixString(16).padLeft(2, '0'))
             .join();
         return got == want;

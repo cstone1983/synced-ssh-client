@@ -9,3 +9,6 @@ export 'src/sync/merge.dart';
 export 'src/util.dart';
 export 'src/vault/backup.dart';
 export 'src/vault/vault.dart';
+export 'src/ssh/ssh.dart';
+export 'src/keys/keys.dart';
+export 'src/import/hosts_import.dart';
