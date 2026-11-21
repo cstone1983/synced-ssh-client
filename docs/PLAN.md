@@ -56,6 +56,15 @@ One user, a few hundred small records. SQLite in WAL mode on a volume is simpler
 - **Host list from the Server Agent Hub (agreed):** Claude generates an `ssh_config`-format file from the hub's server list (nickname, IP, port, tags → groups); you import it in the app. No credentials, no new server endpoint. Re-import skips hosts already present (matched on hostname + port). The `ssh_config` importer therefore moves from Phase 6 to Phase 2, with a multi-select "assign credential" action in the host list.
 - **I don't have the UI mockups.** Please add them under `docs/design/`; until then I'll follow the written structure and colours.
 
+**1.12 Remote access from outside the network (added after review)**
+Checked through the Server Agent Hub on 2026-11-21: the home connection has a real public IP (the first hop past the router is the ISP, no carrier-grade NAT), so a single forwarded port is enough and no relay VPS is needed. The address is residential and probably changes, so a dynamic-DNS name is required. Several VMs already run `cloudflared`; that stays as it is and is not used for SSH.
+
+- **Built into the app: SSH jump host (ProxyJump).** Any host can be set to "connect via" another saved host. One hardened SSH entry point is exposed at home; the inner session is encrypted end to end to the target and host keys are verified on both hops. One level of jump in v1.
+- **Sync through the jump host.** The sync server can be reached through the same tunnel, so it never needs a public reverse proxy. The plain-HTTP rule (§6.6) treats "through the SSH tunnel" as an allowed transport.
+- **Jump host requirements (documented, not automated):** a small dedicated VM or container, key-only login, no root login, non-standard port, nothing else on it. The Proxmox host must not be the jump host: it currently accepts root password logins, which should also be tightened regardless of this project.
+- **WireGuard as the documented alternative.** Not embedded (see reasons in the conversation: Android VPN slot, Windows driver). The server README gets a short setup section; with the VPN up the app needs nothing special.
+- Automatic "direct on LAN, via jump host when away" switching is under Later; in v1 the host setting is explicit, with a per-session "connect directly this time" override.
+
 ---
 
 ## 2. Architecture
@@ -125,7 +134,7 @@ Every synced record has a UUID `id`. All fields listed here are merged individua
 | Type | Fields |
 |---|---|
 | `group` | name, color, sort_order |
-| `host` | nickname, hostname, port, credential_id, auth_order (`key_then_password` \| `key_only` \| `password_only`), group_id, tags[], color, pinned, notes, keepalive_seconds, startup_command, encoding, forwards[] (`{kind: L\|R\|D, bind_host, bind_port, dest_host, dest_port}`), allow_legacy_algorithms, auto_reconnect |
+| `host` | nickname, hostname, port, jump_host_id, credential_id, auth_order (`key_then_password` \| `key_only` \| `password_only`), group_id, tags[], color, pinned, notes, keepalive_seconds, startup_command, encoding, forwards[] (`{kind: L\|R\|D, bind_host, bind_port, dest_host, dest_port}`), allow_legacy_algorithms, auto_reconnect |
 | `credential` | label, username, prompt_for_password, password*, private_key* (unencrypted OpenSSH PEM), public_key, key_type, key_fingerprint |
 | `known_host` | host, port, key_type, fingerprint_sha256, trusted_at |
 | `setting` | key, value (only settings flagged as synced, e.g. theme, default keepalive, scrollback) |
@@ -321,8 +330,8 @@ Each phase ends with: tests run, summary of built / remaining / deviations, stop
 | 2 | Local client core | Repo scaffold + CI. Flutter project (Android + Windows). drift schema incl. sync_state columns. Hosts/groups CRUD, search, sort, duplicate. Quick connect + "save this host". Terminal with tabs, resize, scrollback, copy/paste, extra-keys row with sticky Ctrl/Alt. Password, key and keyboard-interactive auth with the three auth orders. Known-hosts TOFU + changed-key block screen. Keepalive, startup command. `ssh_config` import (file picker) + bulk assign credential. | **Added:** secrets go through the real AEAD envelope with a device-random key (1.8); xterm and foreground-service spikes (1.7, 1.9); legacy-algorithms toggle. |
 | 3 | Vault | Master passphrase, Argon2id keyslot, key hierarchy, migrate Phase-2 device key → VK. Unlock screen, auto-lock, manual lock, change passphrase. Biometric unlock. Generate ed25519/RSA-4096; import OpenSSH (encrypted or not) and `.ppk`; export/copy public key. Install key on server + offer "key only". Prompt-on-connect credentials. FLAG_SECURE. Clipboard handling. Loss-of-passphrase warning. | Encrypted backup export/import moved **here** from Phase 6: the "you can't recover this" warning should ship with its remedy. |
 | 4 | Sync server | Everything in §7, tests, Docker image, compose, README. | SQLite only (1.10). |
-| 5 | Client sync | HLC, outbox, engine, merge, conflict records and UI, Sync screen, enrollment (QR + manual), sync key, device list/revoke, token rotation, HTTP/LAN rule, cert pinning, keyslot propagation on passphrase change. Two-client integration test. | Sync key (1.1), cert pin. |
-| 6 | Polish | Foreground service notification + disconnect action, Doze/battery-exemption prompt, killed-session notice. Auto-reconnect with backoff. Port forwards L/R/D with in-session status. PuTTY registry import. Windows shortcuts and two-pane split. Themes, fonts, pinch/Ctrl+wheel zoom, clickable URLs, volume-key zoom. Light theme. Accessibility pass. | `-D` included. |
+| 5 | Client sync | HLC, outbox, engine, merge, conflict records and UI, Sync screen, enrollment (QR + manual), sync key, device list/revoke, token rotation, HTTP/LAN rule, cert pinning, keyslot propagation on passphrase change. Two-client integration test. *If jump hosts land first:* sync through the jump host; otherwise that option ships with Phase 6. | Sync key (1.1), cert pin. |
+| 6 | Polish | Foreground service notification + disconnect action, Doze/battery-exemption prompt, killed-session notice. Auto-reconnect with backoff. Port forwards L/R/D with in-session status. PuTTY registry import. **Jump hosts ("connect via").** Windows shortcuts and two-pane split. Themes, fonts, pinch/Ctrl+wheel zoom, clickable URLs, volume-key zoom. Light theme. Accessibility pass. | `-D` included. |
 | 7 | Packaging | Signed release APK, Windows installer, tagged server image, top-level README, manual test checklist run. | Inno Setup recommended over MSIX. |
 
 Phase 2 is the largest. If you'd like smaller review units I'd split it into 2a (scaffold, DB, hosts UI) and 2b (SSH, terminal, known hosts).
@@ -359,4 +368,4 @@ Phase 2 is the largest. If you'd like smaller review units I'd split it into 2a 
 
 ## Later (unchanged, plus items moved out above)
 
-SFTP, Mosh, serial/telnet, iOS/macOS/Linux, snippets, team sharing, AI features, health dashboards · vault-key rotation after revocation · server-push sync (SSE) · Android background sync while closed · encodings beyond UTF-8/Latin-1 · Postgres · jump hosts / agent forwarding (dartssh2 supports both; cheap to add if wanted).
+SFTP, Mosh, serial/telnet, iOS/macOS/Linux, snippets, team sharing, AI features, health dashboards · vault-key rotation after revocation · server-push sync (SSE) · Android background sync while closed · encodings beyond UTF-8/Latin-1 · Postgres · agent forwarding · automatic LAN/away switching for jump hosts · embedded WireGuard.
