@@ -124,6 +124,8 @@ void main() {
 
     // (b) both edit while unsynced; different fields merge, same field conflicts
     a.store.update(host, {'nickname': 'pve-needle-host-A', 'port': 2222});
+    // Same-millisecond edits are ordered by device id; make B clearly later.
+    await Future<void>.delayed(const Duration(milliseconds: 20));
     b.store.update(host, {'nickname': 'pve-needle-host-B', 'notes': 'from phone'});
     await a.sync();
     await b.sync();
