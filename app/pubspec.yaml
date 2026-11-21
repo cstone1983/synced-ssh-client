@@ -1,0 +1,42 @@
+name: sshsync
+description: Personal SSH client with self-hosted, end-to-end encrypted sync.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.14.0
+  flutter: ">=3.50.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sshsync_core:
+    path: ../packages/core
+  dartssh2: ^4.1.0
+  xterm: 4.0.0
+  flutter_secure_storage: ^11.2.0
+  local_auth: ^3.0.2
+  path_provider: ^2.1.6
+  file_picker: ^13.4.0
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.5.0
+  flutter_foreground_task: ^11.0.3
+  win32_registry: ^3.0.3
+  url_launcher: ^6.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter.ttf
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700

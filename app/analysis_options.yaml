@@ -1,0 +1,13 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # Flutter 3.50 moved Material into package:material_ui and deprecated
+    # package:flutter/material.dart. xterm 4.0.0 still builds on the old
+    # library and the two do not mix, so the app stays on it for now.
+    deprecated_member_use: ignore
+  exclude:
+    - build/**
+    - android/**
+    - windows/**
+    - linux/**
