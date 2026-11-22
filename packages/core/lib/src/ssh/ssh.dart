@@ -103,8 +103,12 @@ class HostKeyQuestion {
   /// Null on first contact. Non-null means the key CHANGED: possible
   /// man-in-the-middle, and the default answer must be "no".
   final String? previousFingerprint;
+
+  /// Key type of [previousFingerprint], when known.
+  final String? previousKeyType;
   HostKeyQuestion(this.host, this.port, this.keyType, this.fingerprint,
-      this.previousFingerprint);
+      this.previousFingerprint,
+      [this.previousKeyType]);
   bool get changed => previousFingerprint != null;
 }
 
@@ -128,25 +132,73 @@ abstract class SshPrompts {
 
 /// Trust-on-first-use host keys, stored as synced records so a host trusted
 /// on one device is trusted on the others.
+///
+/// A host is identified by host and port only. Every trusted key for it
+/// counts, whatever its type, so a server that suddenly presents a key of
+/// another type gets the "key changed" warning, not a first-contact prompt.
 class KnownHosts {
   final Store store;
   KnownHosts(this.store);
 
-  String _id(String host, int port, String type) => store.vault
-      .deterministicId('known_host|${host.toLowerCase()}|$port|$type');
+  static const _rsa = {'ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512'};
 
-  /// Null if this host/port/key type has never been trusted.
-  String? trustedFingerprint(String host, int port, String type) =>
-      store.get(_id(host, port, type))?.get<String>('fingerprint');
+  /// The kind of key behind a host key algorithm name. The three RSA
+  /// signature names all use the same RSA key.
+  static String keyFamily(String type) =>
+      _rsa.contains(type) ? 'ssh-rsa' : type;
 
-  void trust(String host, int port, String type, String fingerprint) =>
-      store.put(RecordType.knownHost, id: _id(host, port, type), {
-        'host': host.toLowerCase(),
-        'port': port,
-        'key_type': type,
-        'fingerprint': fingerprint,
-        'trusted_at': DateTime.now().millisecondsSinceEpoch,
-      });
+  // Keyed by fingerprint, so two devices trusting two different keys for one
+  // host never write the same record.
+  String _id(String host, int port, String fingerprint) => store.vault
+      .deterministicId('known_host|${host.toLowerCase()}|$port|$fingerprint');
+
+  /// Every trusted key for [host]:[port]. Entries written by older versions
+  /// (one per algorithm name, with a trust time) are read the same way and
+  /// come first, newest first.
+  List<Rec> trustedKeys(String host, int port) {
+    final h = host.toLowerCase();
+    return store
+        .list(RecordType.knownHost)
+        .where((r) =>
+            r.str('host').toLowerCase() == h &&
+            r.integer('port', 22) == port &&
+            r.str('fingerprint').isNotEmpty)
+        .toList()
+      ..sort((a, b) =>
+          b.integer('trusted_at').compareTo(a.integer('trusted_at')));
+  }
+
+  /// Whether [fingerprint] is one of the trusted keys for [host]:[port].
+  bool isTrusted(String host, int port, String fingerprint) =>
+      trustedKeys(host, port).any((r) => r.str('fingerprint') == fingerprint);
+
+  /// Key families already trusted for [host]:[port].
+  Set<String> trustedFamilies(String host, int port) => {
+        for (final r in trustedKeys(host, port))
+          if (r.str('key_type').isNotEmpty) keyFamily(r.str('key_type'))
+      };
+
+  /// Trusts [fingerprint] for [host]:[port] and drops every other key
+  /// trusted for it: accepting a changed key replaces the old one.
+  void trust(String host, int port, String type, String fingerprint) {
+    var id = _id(host, port, fingerprint);
+    for (final old in trustedKeys(host, port)) {
+      if (old.id != id) store.delete(old.id);
+    }
+    // A key that was replaced earlier left a tombstone under this id, and
+    // tombstones are final. Trusting that key again needs a fresh record.
+    if (store.syncRow(id)?.state.isDeleted ?? false) {
+      id = store.vault.randomId();
+    }
+    // Only values that are the same on every device that trusts this key,
+    // so two devices trusting it offline merge without a conflict note.
+    store.put(RecordType.knownHost, id: id, {
+      'host': host.toLowerCase(),
+      'port': port,
+      'key_type': keyFamily(type),
+      'fingerprint': fingerprint,
+    });
+  }
 }
 
 // ---------------------------------------------------------------- connect
@@ -174,12 +226,24 @@ class SshConnection {
   }
 }
 
-SSHAlgorithms _algorithms(bool legacy) {
+/// Algorithm lists for one connection. Host key algorithms whose key type is
+/// already trusted for this host go first, as OpenSSH does, so a server that
+/// adds a new key type keeps presenting the one we know instead of raising a
+/// false "key changed" alarm.
+SSHAlgorithms _algorithms(bool legacy,
+    {Set<String> trustedFamilies = const {}}) {
   const d = SSHAlgorithms();
-  if (!legacy) return d;
+  bool known(SSHHostkeyType t) =>
+      trustedFamilies.contains(KnownHosts.keyFamily(t.name));
+  final base = [...d.hostkey, if (legacy) SSHHostkeyType.rsaSha1];
+  final hostkey = [...base.where(known), ...base.where((t) => !known(t))];
+  if (!legacy) {
+    return SSHAlgorithms(
+        kex: d.kex, hostkey: hostkey, cipher: d.cipher, mac: d.mac);
+  }
   return SSHAlgorithms(
     kex: [...d.kex, SSHKexType.dhGexSha1, SSHKexType.dh14Sha1, SSHKexType.dh1Sha1],
-    hostkey: [...d.hostkey, SSHHostkeyType.rsaSha1],
+    hostkey: hostkey,
     cipher: [
       ...d.cipher,
       SSHCipherType.aes256cbc,
@@ -277,7 +341,8 @@ Future<SshConnection> _connectOnce(ConnectSpec spec, KnownHosts known,
     final client = SSHClient(
       socket,
       username: spec.username,
-      algorithms: _algorithms(spec.legacyAlgorithms),
+      algorithms: _algorithms(spec.legacyAlgorithms,
+          trustedFamilies: known.trustedFamilies(spec.host, spec.port)),
       identities: identities,
       keepAliveInterval: spec.keepaliveSeconds > 0
           ? Duration(seconds: spec.keepaliveSeconds)
@@ -285,14 +350,27 @@ Future<SshConnection> _connectOnce(ConnectSpec spec, KnownHosts known,
       onVerifyHostKey: (type, fingerprintBytes) async {
         var fp = utf8.decode(fingerprintBytes, allowMalformed: true);
         if (!fp.startsWith('SHA256:')) fp = 'SHA256:$fp';
-        final trusted = known.trustedFingerprint(spec.host, spec.port, type);
-        if (trusted == fp) return true;
-        final ok = await prompts.confirmHostKey(
-            HostKeyQuestion(spec.host, spec.port, type, fp, trusted));
+        final trusted = known.trustedKeys(spec.host, spec.port);
+        if (trusted.any((r) => r.str('fingerprint') == fp)) return true;
+        // Any trusted key at all means this is a change. Show the trusted
+        // key of the same kind if there is one, else the newest.
+        final family = KnownHosts.keyFamily(type);
+        final previous = trusted.isEmpty
+            ? null
+            : trusted.firstWhere(
+                (r) => KnownHosts.keyFamily(r.str('key_type')) == family,
+                orElse: () => trusted.first);
+        final ok = await prompts.confirmHostKey(HostKeyQuestion(
+            spec.host,
+            spec.port,
+            type,
+            fp,
+            previous?.str('fingerprint'),
+            previous?.get<String>('key_type')));
         if (ok) {
           known.trust(spec.host, spec.port, type, fp);
         } else {
-          hostKeyProblem = trusted == null
+          hostKeyProblem = previous == null
               ? 'Host key was not trusted.'
               : 'Host key changed and was not accepted.';
         }
