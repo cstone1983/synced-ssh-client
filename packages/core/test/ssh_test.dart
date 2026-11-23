@@ -59,20 +59,38 @@ void main() {
   Process? sshd;
   const port = 22922;
 
-  Future<void> startSshd({bool newHostKey = false}) async {
+  /// Host key file for [type]; the ed25519 one keeps its old name.
+  String keyFile(String type) =>
+      type == 'ed25519' ? '${tmp.path}/hostkey' : '${tmp.path}/hostkey_$type';
+
+  String fingerprintOf(String type) => Process.runSync(
+          'ssh-keygen', ['-lf', '${keyFile(type)}.pub'])
+      .stdout
+      .toString()
+      .split(' ')[1];
+
+  /// Restarts sshd with one host key per entry of [types] (ssh-keygen -t
+  /// names). [hostKeyAlgorithms] limits what the server offers.
+  Future<void> startSshd(
+      {bool newHostKey = false,
+      List<String> types = const ['ed25519'],
+      String? hostKeyAlgorithms}) async {
     sshd?.kill();
     await sshd?.exitCode;
-    final key = '${tmp.path}/hostkey';
-    if (newHostKey || !File(key).existsSync()) {
-      for (final f in [key, '$key.pub']) {
-        if (File(f).existsSync()) File(f).deleteSync();
+    for (final type in types) {
+      final key = keyFile(type);
+      if (newHostKey || !File(key).existsSync()) {
+        for (final f in [key, '$key.pub']) {
+          if (File(f).existsSync()) File(f).deleteSync();
+        }
+        Process.runSync('ssh-keygen', ['-q', '-t', type, '-N', '', '-f', key]);
       }
-      Process.runSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', key]);
     }
     File('${tmp.path}/sshd_config').writeAsStringSync('''
 Port $port
 ListenAddress 127.0.0.1
-HostKey $key
+${types.map((t) => 'HostKey ${keyFile(t)}').join('\n')}
+${hostKeyAlgorithms == null ? '' : 'HostKeyAlgorithms $hostKeyAlgorithms'}
 PidFile ${tmp.path}/sshd.pid
 PasswordAuthentication yes
 KbdInteractiveAuthentication no
@@ -131,6 +149,7 @@ AllowTcpForwarding yes
           String? key,
           String order = AuthOrder.keyThenPassword,
           int p = port,
+          bool legacy = false,
           ConnectSpec? jump}) =>
       ConnectSpec(
           label: 'test',
@@ -140,6 +159,7 @@ AllowTcpForwarding yes
           password: password,
           privateKeyPem: key,
           authOrder: order,
+          legacyAlgorithms: legacy,
           jump: jump);
 
   Future<String> runShell(TerminalSession s, String marker, String cmd) async {
@@ -198,6 +218,74 @@ AllowTcpForwarding yes
     prompts.acceptHostKey = true;
     (await sshConnect(spec(), mgr.knownHosts, prompts)).close();
     expect(store.list('known_host').single.str('fingerprint'), isNot(fp));
+  });
+
+  test('a key of another type is a changed key, not a first connection', () async {
+    addTearDown(startSshd);
+    await startSshd(types: ['ed25519']);
+    (await sshConnect(spec(), mgr.knownHosts, prompts)).close();
+    final edFp = fingerprintOf('ed25519');
+    expect(prompts.hostKeyQuestions.single.changed, isFalse);
+
+    // Same host and port, but now the server only has an ECDSA key.
+    await startSshd(types: ['ecdsa'], newHostKey: true);
+    prompts.acceptHostKey = false;
+    await expectLater(sshConnect(spec(), mgr.knownHosts, prompts),
+        throwsA(isA<SshFailure>()
+            .having((e) => e.kind, 'kind', SshFailureKind.hostKey)
+            .having((e) => e.message, 'message', contains('changed'))));
+    final q = prompts.hostKeyQuestions.last;
+    expect(q.changed, isTrue, reason: 'a swapped key type must warn');
+    expect(q.keyType, startsWith('ecdsa-sha2-'));
+    expect(q.fingerprint, fingerprintOf('ecdsa'));
+    expect(q.previousFingerprint, edFp);
+    expect(q.previousKeyType, 'ssh-ed25519');
+    expect(store.list('known_host').single.str('fingerprint'), edFp, reason: 'old key kept when declined');
+
+    prompts.acceptHostKey = true;
+    (await sshConnect(spec(), mgr.knownHosts, prompts)).close();
+    final rows = store.list('known_host');
+    expect(rows, hasLength(1), reason: 'accepting replaces the old key');
+    expect(rows.single.str('fingerprint'), fingerprintOf('ecdsa'));
+
+    final asked = prompts.hostKeyQuestions.length;
+    (await sshConnect(spec(), mgr.knownHosts, prompts)).close();
+    expect(prompts.hostKeyQuestions, hasLength(asked), reason: 'new key remembered');
+  });
+
+  test('one RSA key: rsa-sha2-512, rsa-sha2-256 and ssh-rsa share one entry', () async {
+    addTearDown(startSshd);
+    await startSshd(types: ['rsa'], newHostKey: true);
+    (await sshConnect(spec(), mgr.knownHosts, prompts)).close();
+    expect(prompts.hostKeyQuestions.single.keyType, 'rsa-sha2-512');
+    expect(prompts.hostKeyQuestions.single.fingerprint, fingerprintOf('rsa'));
+
+    await startSshd(types: ['rsa'], hostKeyAlgorithms: 'rsa-sha2-256');
+    (await sshConnect(spec(), mgr.knownHosts, prompts)).close();
+    await startSshd(types: ['rsa'], hostKeyAlgorithms: 'ssh-rsa');
+    (await sshConnect(spec(legacy: true), mgr.knownHosts, prompts)).close();
+
+    expect(prompts.hostKeyQuestions, hasLength(1), reason: 'same key under every RSA signature name');
+    expect(store.list('known_host'), hasLength(1), reason: 'no duplicate entries');
+  });
+
+  test('a server that adds a key type keeps presenting the trusted one', () async {
+    addTearDown(startSshd);
+    await startSshd(types: ['ecdsa'], newHostKey: true);
+    (await sshConnect(spec(), mgr.knownHosts, prompts)).close();
+    expect(prompts.hostKeyQuestions.single.keyType, startsWith('ecdsa-sha2-'));
+
+    // ed25519 is preferred by default; the trusted ECDSA key must win here.
+    await startSshd(types: ['ed25519', 'ecdsa'], newHostKey: false);
+    (await sshConnect(spec(), mgr.knownHosts, prompts)).close();
+    expect(prompts.hostKeyQuestions, hasLength(1), reason: 'no false "changed" alarm');
+
+    // A host we never trusted still gets the default order.
+    final fresh = KnownHosts(store);
+    store.list('known_host').forEach((r) => store.delete(r.id));
+    (await sshConnect(spec(), fresh, prompts)).close();
+    expect(prompts.hostKeyQuestions.last.keyType, 'ssh-ed25519');
+    expect(prompts.hostKeyQuestions.last.changed, isFalse);
   });
 
   test('install key, key only, key then password fallback, password only', () async {

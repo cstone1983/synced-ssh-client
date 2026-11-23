@@ -199,8 +199,7 @@ void main() {
   test('same known host trusted offline on two devices becomes one record', () async {
     final a = device('a'), b = device('b');
     for (final d in [a, b]) {
-      d.store.put('known_host', {'host': 'h', 'port': 22, 'key_type': 'ssh-ed25519', 'fingerprint': 'SHA256:x'},
-          id: d.store.vault.deterministicId('known_host|h|22|ssh-ed25519'));
+      KnownHosts(d.store).trust('h', 22, 'ssh-ed25519', 'SHA256:x');
     }
     await a.sync();
     await b.sync();
@@ -209,6 +208,50 @@ void main() {
     expect(b.store.list('known_host'), hasLength(1));
     expect(a.store.list('conflict'), isEmpty);
     expect(server.records.length, 1);
+  });
+
+  test('one RSA key trusted under two signature names on two devices: no conflict', () async {
+    final a = device('a'), b = device('b');
+    KnownHosts(a.store).trust('h', 22, 'rsa-sha2-512', 'SHA256:rsa');
+    KnownHosts(b.store).trust('h', 22, 'ssh-rsa', 'SHA256:rsa');
+    await a.sync();
+    await b.sync();
+    await a.sync();
+    for (final d in [a, b]) {
+      expect(d.store.list('known_host'), hasLength(1));
+      expect(d.store.list('conflict'), isEmpty);
+    }
+  });
+
+  test('two devices trusting two keys for one host keep both, no collision', () async {
+    final a = device('a'), b = device('b');
+    KnownHosts(a.store).trust('h', 22, 'ssh-ed25519', 'SHA256:ed');
+    KnownHosts(b.store).trust('h', 22, 'ecdsa-sha2-nistp256', 'SHA256:ec');
+    await a.sync();
+    await b.sync();
+    await a.sync();
+    for (final d in [a, b]) {
+      final k = KnownHosts(d.store);
+      expect(k.isTrusted('h', 22, 'SHA256:ed'), isTrue);
+      expect(k.isTrusted('h', 22, 'SHA256:ec'), isTrue);
+      expect(d.store.list('conflict'), isEmpty);
+    }
+  });
+
+  test('replacing a host key on one device removes the old key on the other', () async {
+    final a = device('a'), b = device('b');
+    KnownHosts(a.store).trust('h', 22, 'ssh-ed25519', 'SHA256:old');
+    await a.sync();
+    await b.sync();
+    expect(KnownHosts(b.store).isTrusted('h', 22, 'SHA256:old'), isTrue);
+
+    KnownHosts(a.store).trust('h', 22, 'ssh-ed25519', 'SHA256:new');
+    await a.sync();
+    await b.sync();
+    final k = KnownHosts(b.store);
+    expect(k.isTrusted('h', 22, 'SHA256:old'), isFalse);
+    expect(k.isTrusted('h', 22, 'SHA256:new'), isTrue);
+    expect(b.store.list('conflict'), isEmpty);
   });
 
   test('paging: more records than one pull page', () async {
