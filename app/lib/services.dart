@@ -8,6 +8,8 @@ import 'package:sshsync_core/sshsync_core.dart';
 
 import 'platform.dart';
 
+enum BioUnlock { unlocked, failed, reset }
+
 /// App-wide services and state. One instance, created at startup.
 class App extends ChangeNotifier {
   static late App i;
@@ -75,20 +77,27 @@ class App extends ChangeNotifier {
     _afterUnlock();
   }
 
-  Future<bool> unlockWithBiometrics() async {
-    final k = await secure.readBiometricKey();
-    if (k == null) return false;
+  Future<BioUnlock> unlockWithBiometrics() async {
+    final r = await secure.readBiometricKey();
+    if (r.state == BioRead.failed) return BioUnlock.failed;
+    if (r.state == BioRead.missing) {
+      // The OS dropped the key (a fingerprint was added). It cannot come
+      // back, so turn the setting off rather than prompting forever.
+      await setBiometric(false);
+      return BioUnlock.reset;
+    }
     try {
-      vault.unlockWithKey(base64.decode(k));
+      vault.unlockWithKey(base64.decode(r.key!));
       // Prove the stored key is this vault's key before trusting it.
       final check = store.kvGet('key_check');
       if (check != null) vault.openLocal('key_check', base64.decode(check));
     } catch (_) {
       vault.lock();
-      return false;
+      await setBiometric(false);
+      return BioUnlock.reset;
     }
     _afterUnlock();
-    return true;
+    return BioUnlock.unlocked;
   }
 
   void _afterUnlock() {

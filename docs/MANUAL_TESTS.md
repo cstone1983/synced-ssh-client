@@ -44,6 +44,11 @@ logic; this covers what only a device can show. Tick each box per platform.
 - [ ] Import an OpenSSH key (encrypted and not) and a PuTTY `.ppk`; copy/export the public key.
 - [ ] Auto-lock: set 1 minute, background the app for 2 minutes: locked on return, sessions still running.
 - [ ] Biometric unlock on Android (fingerprint) and Windows (Hello).
+- [ ] Android fingerprint, every unlock: turn it on (it asks once), lock, unlock: asked. Background past auto-lock and come back five times: asked every time, never unlocked silently. Repeat with an SSH session open (the foreground service keeps the app alive).
+- [ ] Android: force-stop the app, open it: asked again.
+- [ ] Android: add a fingerprint in the phone's Settings, open the app: it says fingerprint unlock was reset, the passphrase works, the switch is off in Settings, and sync still works (its token was not touched).
+- [ ] Android 12+: Settings > System > Backup (or a new-phone transfer) carries no SSH Sync data.
+- [ ] Android: try a plain `http://` LAN sync server with the insecure switch on. Note whether Android blocks it.
 - [ ] Android: screenshots of the vault, credential and add-device screens are blocked and the app is blank in recents while locked.
 - [ ] Change the master passphrase; old one refused, new one works.
 - [ ] Export a backup, erase the device, create a new vault, import the backup: everything returns.

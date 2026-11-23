@@ -165,7 +165,8 @@ class SettingsScreen extends StatelessWidget {
                         title: Text(Platform.isWindows ? 'Unlock with Windows Hello' : 'Unlock with fingerprint or face'),
                         subtitle: Text(Platform.isWindows
                             ? 'Convenience only: Windows releases the stored key to any program running as you. Hello guards the keyboard, not the disk.'
-                            : 'The vault key is held by the Android Keystore and released only by a strong biometric.'),
+                            : 'The vault key is held by the Android Keystore and released only by a strong biometric, asked for on every unlock. '
+                                'Adding a fingerprint to the phone turns this off.'),
                         isThreeLine: true,
                         value: app.biometricEnabled,
                         onChanged: (v) async {
