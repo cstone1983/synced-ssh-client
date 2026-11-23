@@ -143,6 +143,7 @@ class App extends ChangeNotifier {
     vault.lock();
     await secure.clearBiometricKey();
     await secure.write('sync_token', null);
+    await secure.write('sync_token_pending', null);
     await secure.write('sync_key', null);
     store.wipe();
     notifyListeners();
@@ -269,16 +270,28 @@ class SyncService {
   bool get insecureLan => config['allow_insecure'] == true;
   SyncStatus? get status => engine?.current;
 
-  HttpSyncApi _api(String url, String token, String? pin) => HttpSyncApi(
-      url, token,
-      client: (pin == null || pin.isEmpty) ? null : HttpSyncApi.pinnedClient(pin));
+  HttpSyncApi _api(String url, String token, String? pin,
+          {String? pending, TokenSaver? save}) =>
+      HttpSyncApi(url, token,
+          client: (pin == null || pin.isEmpty) ? null : HttpSyncApi.pinnedClient(pin),
+          pendingToken: pending,
+          saveTokens: save);
+
+  /// Saves the token and any unconfirmed new one from a rotation, so a
+  /// rotation whose reply was lost can be finished after a restart.
+  Future<void> _saveTokens(String token, String? pending) async {
+    await app.secure.write('sync_token_pending', pending);
+    await app.secure.write('sync_token', token);
+  }
 
   Future<void> onUnlock() async {
     if (!configured || engine != null) return;
     final token = await app.secure.read('sync_token');
+    final pending = await app.secure.read('sync_token_pending');
     final sk = await app.secure.read('sync_key');
     if (token == null || !app.unlocked) return;
-    api = _api(url!, token, config['cert_pin'] as String?);
+    api = _api(url!, token, config['cert_pin'] as String?,
+        pending: pending, save: _saveTokens);
     engine = SyncEngine(_store, api!,
         syncKey: sk == null ? null : SyncKey.parse(sk));
     _sub = engine!.status.listen((_) => app.touch());
@@ -310,6 +323,7 @@ class SyncService {
   Future<void> _save(String url, EnrollResult e, String skText,
       {required bool allowInsecure, String? pin}) async {
     await app.secure.write('sync_token', e.token);
+    await app.secure.write('sync_token_pending', null);
     await app.secure.write('sync_key', skText);
     _store.resetSyncState();
     _store.kvSet('sync_cursor', null);
@@ -416,6 +430,7 @@ class SyncService {
     }
     onLock();
     await app.secure.write('sync_token', null);
+    await app.secure.write('sync_token_pending', null);
     await app.secure.write('sync_key', null);
     _store.kvSet('sync', null);
     _store.kvSet('sync_cursor', null);

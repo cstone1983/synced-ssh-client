@@ -242,7 +242,10 @@ SSHAlgorithms _algorithms(bool legacy,
         kex: d.kex, hostkey: hostkey, cipher: d.cipher, mac: d.mac);
   }
   return SSHAlgorithms(
-    kex: [...d.kex, SSHKexType.dhGexSha1, SSHKexType.dh14Sha1, SSHKexType.dh1Sha1],
+    // diffie-hellman-group1-sha1 (1024-bit Oakley group 2) is left out even
+    // here: it is breakable by a well-funded attacker (Logjam) and OpenSSH
+    // dropped it from its defaults in 2015.
+    kex: [...d.kex, SSHKexType.dhGexSha1, SSHKexType.dh14Sha1],
     hostkey: hostkey,
     cipher: [
       ...d.cipher,

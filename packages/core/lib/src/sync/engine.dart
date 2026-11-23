@@ -23,12 +23,18 @@ class SyncStatus {
 
   /// Blobs from the server that could not be decrypted in the last run.
   final int unreadable;
+
+  /// The server's keyslot could not be opened with this device's sync key in
+  /// the last run. Records still sync; passphrase changes from other devices
+  /// cannot reach this one, and this one's are not uploaded, until it is fixed.
+  final bool keyslotUnreadable;
   const SyncStatus(this.phase,
       {this.lastSuccessMs,
       this.error,
       this.pending = 0,
       this.clockSkewMs,
-      this.unreadable = 0});
+      this.unreadable = 0,
+      this.keyslotUnreadable = false});
 
   bool get clockWarning => clockSkewMs != null && clockSkewMs!.abs() > 5 * 60000;
 }
@@ -61,7 +67,8 @@ class SyncEngine {
   CryptoBox get _crypto => _vault.crypto;
   Stream<SyncStatus> get status => _status.stream;
 
-  void _set(SyncPhase phase, {String? error, int unreadable = 0}) {
+  void _set(SyncPhase phase,
+      {String? error, int unreadable = 0, bool keyslotUnreadable = false}) {
     final skew = api.lastServerTime == 0
         ? current.clockSkewMs
         : api.lastServerTime - DateTime.now().millisecondsSinceEpoch;
@@ -70,7 +77,8 @@ class SyncEngine {
         error: error,
         pending: store.pendingCount,
         clockSkewMs: skew,
-        unreadable: unreadable);
+        unreadable: unreadable,
+        keyslotUnreadable: keyslotUnreadable);
     if (!_status.isClosed) _status.add(current);
   }
 
@@ -112,14 +120,15 @@ class SyncEngine {
     if (!_vault.isUnlocked || current.phase == SyncPhase.revoked) return false;
     _set(SyncPhase.syncing);
     try {
-      await _syncKeyslot();
+      final keyslotOk = await _syncKeyslot();
       final unreadable = await _pull();
       await _push();
       store.kvSet('sync_last_success',
           '${DateTime.now().millisecondsSinceEpoch}');
       _failures = 0;
       _notBefore = DateTime.fromMillisecondsSinceEpoch(0);
-      _set(SyncPhase.idle, unreadable: unreadable);
+      _set(SyncPhase.idle,
+          unreadable: unreadable, keyslotUnreadable: !keyslotOk);
       return true;
     } on OfflineException catch (e) {
       _fail(SyncPhase.offline, e.message);
@@ -153,31 +162,41 @@ class SyncEngine {
   static void markKeyslotChanged(Store store) =>
       store.kvSet('keyslot_dirty', '1');
 
-  Future<void> _syncKeyslot() async {
+  /// Returns false if the server's keyslot could not be opened. That is a
+  /// warning, not a stop: records are sealed with the vault key, not the
+  /// keyslot, so they keep syncing. Any device token can replace the keyslot,
+  /// so a broken one must not be able to halt sync for everyone.
+  Future<bool> _syncKeyslot() async {
     final sk = syncKey;
     final localText = store.kvGet('keyslot');
-    if (sk == null || localText == null) return;
+    if (sk == null || localText == null) return true;
     final local = Keyslot.decode(localText);
     final known = int.tryParse(store.kvGet('keyslot_version') ?? '') ?? 0;
     final dirty = store.kvGet('keyslot_dirty') == '1';
     final remote = await api.getKeyslot();
 
-    Future<void> upload(int base) async {
+    Future<bool> upload(int base) async {
       final v = await api.putKeyslot(
           base, SyncKey.sealKeyslot(_crypto, sk, local));
       store.kvSet('keyslot_version', '$v');
       store.kvSet('keyslot_dirty', null);
+      return true;
     }
 
     if (remote == null) return upload(0);
-    if (remote.version == known && !dirty) return;
+    if (remote.version == known && !dirty) return true;
 
     final Keyslot theirs;
     try {
       theirs = SyncKey.openKeyslot(_crypto, sk, remote.blob);
     } on CryptoException {
-      throw StateError('The server holds a vault that this sync key cannot '
-          'open. Is this the right server?');
+      // Keep using the local keyslot and leave the server's alone: it may
+      // belong to someone else, so it is never overwritten from here.
+      return false;
+    } on FormatException {
+      return false;
+    } on TypeError {
+      return false;
     }
     if (theirs.vaultId != local.vaultId) {
       throw StateError('The server belongs to a different vault.');
@@ -187,6 +206,7 @@ class SyncEngine {
     // key is unchanged, so nothing needs re-encrypting.
     store.kvSet('keyslot', theirs.encode());
     store.kvSet('keyslot_version', '${remote.version}', notify: true);
+    return true;
   }
 
   // ---- pull / push ----

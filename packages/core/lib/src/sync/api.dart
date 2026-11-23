@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -89,6 +90,8 @@ abstract class SyncApi {
   Future<int> putKeyslot(int baseVersion, Uint8List blob);
   Future<List<DeviceInfo>> devices();
   Future<void> revokeDevice(String id);
+
+  /// Replace this device's token; returns the new one.
   Future<String> rotateToken();
   Future<({String code, int expiresAt})> createEnrollmentCode();
 
@@ -142,17 +145,46 @@ class UrlPolicy {
   }
 }
 
+/// Persists this device's tokens. [pending] is a new token that was sent to
+/// the server but not yet confirmed; null once it is settled.
+typedef TokenSaver = Future<void> Function(String token, String? pending);
+
 /// HTTP implementation of [SyncApi] for the FastAPI server.
 class HttpSyncApi implements SyncApi {
   final Uri base;
   String token;
+
+  /// A new token sent in a rotation whose reply never arrived. If the
+  /// current token is refused, this one is tried and adopted when it works.
+  String? pendingToken;
+  final TokenSaver? saveTokens;
   final http.Client _http;
   @override
   int lastServerTime = 0;
 
-  HttpSyncApi(String baseUrl, this.token, {http.Client? client})
+  HttpSyncApi(String baseUrl, this.token,
+      {http.Client? client, this.pendingToken, this.saveTokens})
       : base = Uri.parse(baseUrl.trim().replaceAll(RegExp(r'/+$'), '')),
         _http = client ?? http.Client();
+
+  /// 256 random bits, URL-safe base64 without padding (43 characters), the
+  /// same shape as the server's own tokens.
+  static String newToken() {
+    final r = Random.secure();
+    final bytes = Uint8List.fromList(List.generate(32, (_) => r.nextInt(256)));
+    return base64Url.encode(bytes).replaceAll('=', '');
+  }
+
+  static String tokenHash(String token) => SHA256Digest()
+      .process(Uint8List.fromList(utf8.encode(token)))
+      .map((b) => b.toRadixString(16).padLeft(2, '0'))
+      .join();
+
+  Future<void> _adopt(String t) async {
+    token = t;
+    pendingToken = null;
+    await saveTokens?.call(t, null);
+  }
 
   /// An HTTP client that additionally trusts one certificate, identified by
   /// its SHA-256 fingerprint (hex), for self-signed homelab servers.
@@ -182,10 +214,27 @@ class HttpSyncApi implements SyncApi {
 
   Future<Map<String, dynamic>> _send(String method, String path,
       {Object? body, bool auth = true, Map<String, String>? query}) async {
+    final res = await _request(method, path, body, auth ? token : null, query);
+    final pending = pendingToken;
+    if (auth &&
+        pending != null &&
+        pending != token &&
+        res.status == 401 &&
+        res.code == 'unauthorized') {
+      // A rotation went through but its reply was lost: use the new token.
+      final retry = await _request(method, path, body, pending, query);
+      if (retry.status >= 200 && retry.status < 300) await _adopt(pending);
+      return retry.unwrap();
+    }
+    return res.unwrap();
+  }
+
+  Future<_Reply> _request(String method, String path, Object? body,
+      String? bearer, Map<String, String>? query) async {
     final uri = base.replace(
         path: '${base.path}$path', queryParameters: query);
     final req = http.Request(method, uri);
-    if (auth) req.headers['authorization'] = 'Bearer $token';
+    if (bearer != null) req.headers['authorization'] = 'Bearer $bearer';
     if (body != null) {
       req.headers['content-type'] = 'application/json';
       req.body = jsonEncode(body);
@@ -208,13 +257,7 @@ class HttpSyncApi implements SyncApi {
     } catch (_) {
       j = {};
     }
-    if (res.statusCode >= 200 && res.statusCode < 300) return j;
-    final err = j['error'];
-    if (err is Map) {
-      throw ApiException(res.statusCode, '${err['code']}', '${err['message']}');
-    }
-    throw ApiException(res.statusCode, 'http_${res.statusCode}',
-        'Unexpected response from server');
+    return _Reply(res.statusCode, j);
   }
 
   RemoteChange _change(Map j) => RemoteChange(j['id'] as String,
@@ -286,10 +329,23 @@ class HttpSyncApi implements SyncApi {
   @override
   Future<void> revokeDevice(String id) => _send('DELETE', '/v1/devices/$id');
 
+  /// The new token is made here and saved as pending before the server
+  /// hears of it, so a lost reply can never leave this device without a
+  /// working token: the next request falls back to the pending one. A
+  /// pending token left by an earlier, unconfirmed rotation is reused, so a
+  /// retry finishes that rotation instead of starting one the server
+  /// never saw.
   @override
   Future<String> rotateToken() async {
-    final j = await _send('POST', '/v1/devices/self/rotate-token');
-    return token = j['token'] as String;
+    final next = pendingToken ?? newToken();
+    if (pendingToken == null) {
+      pendingToken = next;
+      await saveTokens?.call(token, next);
+    }
+    await _send('POST', '/v1/devices/self/rotate-token',
+        body: {'token_hash': tokenHash(next)});
+    if (token != next) await _adopt(next);
+    return token;
   }
 
   @override
@@ -301,4 +357,24 @@ class HttpSyncApi implements SyncApi {
   Future<Map<String, dynamic>> status() => _send('GET', '/v1/status');
 
   void close() => _http.close();
+}
+
+class _Reply {
+  final int status;
+  final Map<String, dynamic> json;
+  _Reply(this.status, this.json);
+
+  String? get code {
+    final err = json['error'];
+    return err is Map ? '${err['code']}' : null;
+  }
+
+  Map<String, dynamic> unwrap() {
+    if (status >= 200 && status < 300) return json;
+    final err = json['error'];
+    if (err is Map) {
+      throw ApiException(status, '${err['code']}', '${err['message']}');
+    }
+    throw ApiException(status, 'http_$status', 'Unexpected response from server');
+  }
 }

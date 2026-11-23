@@ -27,6 +27,12 @@ class KeyslotPut(_Model):
     blob: StrictStr
 
 
+class RotateTokenRequest(_Model):
+    # SHA-256 (lowercase hex) of a token the client generated and stored
+    # first, so a lost reply can never leave the device without a token.
+    token_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class Change(_Model):
     id: uuid.UUID
     base_seq: StrictInt = Field(ge=0)
