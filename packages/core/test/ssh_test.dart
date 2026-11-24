@@ -74,7 +74,8 @@ void main() {
   Future<void> startSshd(
       {bool newHostKey = false,
       List<String> types = const ['ed25519'],
-      String? hostKeyAlgorithms}) async {
+      String? hostKeyAlgorithms,
+      String? kexAlgorithms}) async {
     sshd?.kill();
     await sshd?.exitCode;
     for (final type in types) {
@@ -91,6 +92,7 @@ Port $port
 ListenAddress 127.0.0.1
 ${types.map((t) => 'HostKey ${keyFile(t)}').join('\n')}
 ${hostKeyAlgorithms == null ? '' : 'HostKeyAlgorithms $hostKeyAlgorithms'}
+${kexAlgorithms == null ? '' : 'KexAlgorithms $kexAlgorithms'}
 PidFile ${tmp.path}/sshd.pid
 PasswordAuthentication yes
 KbdInteractiveAuthentication no
@@ -267,6 +269,18 @@ AllowTcpForwarding yes
 
     expect(prompts.hostKeyQuestions, hasLength(1), reason: 'same key under every RSA signature name');
     expect(store.list('known_host'), hasLength(1), reason: 'no duplicate entries');
+  });
+
+  test('legacy mode still speaks group14-sha1 but never group1-sha1', () async {
+    addTearDown(startSshd);
+    await startSshd(kexAlgorithms: 'diffie-hellman-group14-sha1');
+    (await sshConnect(spec(legacy: true), mgr.knownHosts, prompts)).close();
+    await expectLater(sshConnect(spec(), mgr.knownHosts, prompts), throwsA(isA<SshFailure>()),
+        reason: 'sha1 key exchange only in legacy mode');
+
+    await startSshd(kexAlgorithms: 'diffie-hellman-group1-sha1');
+    await expectLater(
+        sshConnect(spec(legacy: true), mgr.knownHosts, prompts), throwsA(isA<SshFailure>()));
   });
 
   test('a server that adds a key type keeps presenting the trusted one', () async {

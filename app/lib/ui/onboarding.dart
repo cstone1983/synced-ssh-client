@@ -224,11 +224,19 @@ class _UnlockScreenState extends State<UnlockScreen> {
   Future<void> _biometric() async {
     if (busy) return;
     setState(() => busy = true);
-    final ok = await App.i.unlockWithBiometrics();
+    final r = await App.i.unlockWithBiometrics();
     if (mounted) {
       setState(() {
         busy = false;
-        if (!ok) error = 'Biometric unlock did not succeed. Enter your passphrase.';
+        switch (r) {
+          case BioUnlock.unlocked:
+            break;
+          case BioUnlock.failed:
+            error = 'Biometric unlock did not succeed. Enter your passphrase.';
+          case BioUnlock.reset:
+            error = 'Fingerprint unlock was reset, because the fingerprints on this device changed. '
+                'Unlock with your passphrase, then turn it on again in Settings.';
+        }
       });
     }
   }

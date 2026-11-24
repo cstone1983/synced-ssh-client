@@ -361,6 +361,20 @@ void main() {
       final big = ppk.replaceFirst('Argon2-Memory: 1024', 'Argon2-Memory: 99999999999');
       expect(() => Keys.import(big, passphrase: pass),
           throwsImport(wrongPassphrase: false));
+      // Just over the 256 MiB cap: a clear message, not a wrong passphrase.
+      final over = ppk.replaceFirst('Argon2-Memory: 1024', 'Argon2-Memory: 262145');
+      expect(
+          () => Keys.import(over, passphrase: pass),
+          throwsA(isA<KeyImportException>()
+              .having((e) => e.wrongPassphrase, 'wrongPassphrase', isFalse)
+              .having((e) => e.message, 'message', contains('256 MiB'))));
+      // Inside the cap the KDF runs; the changed cost no longer matches the
+      // file's MAC, so it fails, but not with the cap's message.
+      final under = ppk.replaceFirst('Argon2-Memory: 1024', 'Argon2-Memory: 2048');
+      expect(
+          () => Keys.import(under, passphrase: pass),
+          throwsA(isA<KeyImportException>()
+              .having((e) => e.message, 'message', isNot(contains('256 MiB')))));
     }, skip: skipPutty);
 
     for (final t in ['ed448', 'dsa']) {

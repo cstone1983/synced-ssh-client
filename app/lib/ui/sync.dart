@@ -130,6 +130,11 @@ class _SyncScreenState extends State<SyncScreen> {
                             const SizedBox(height: 12),
                             WarningBox('${st!.unreadable} item(s) on the server could not be decrypted with this vault and were skipped.'),
                           ],
+                          if (st?.keyslotUnreadable ?? false) ...[
+                            const SizedBox(height: 12),
+                            const WarningBox('The server\'s copy of the vault keyslot could not be opened with this device\'s sync key. '
+                                'Hosts and keys still sync, but passphrase changes will not reach or leave this device, and new devices cannot join, until it is replaced.'),
+                          ],
                           if (st?.phase == SyncPhase.revoked) ...[
                             const SizedBox(height: 12),
                             const WarningBox('Another device revoked this one. Local data is untouched. Disconnect, then enroll again or erase this device in Settings.'),
@@ -251,11 +256,12 @@ class _SyncScreenState extends State<SyncScreen> {
                         child: TextButton(
                           onPressed: () async {
                             try {
-                              final t = await sync.api!.rotateToken();
-                              await app.secure.write('sync_token', t);
+                              // The API saves the new token itself, before
+                              // and after the server confirms it.
+                              await sync.api!.rotateToken();
                               if (context.mounted) toast(context, 'This device now uses a new token.');
                             } catch (_) {
-                              if (context.mounted) toast(context, 'Could not reach the server.');
+                              if (context.mounted) toast(context, 'Could not reach the server. Try again when it is reachable.');
                             }
                           },
                           child: const Text('Rotate this device\'s token'),

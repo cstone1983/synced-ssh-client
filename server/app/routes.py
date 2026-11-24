@@ -11,7 +11,14 @@ from sqlalchemy import func, select
 from . import config
 from .db import Device, EnrollmentCode, Keyslot, Record, get_meta, get_seq, set_seq
 from .errors import ApiError
-from .schemas import EnrollRequest, KeyslotPut, PushRequest, decode_blob, encode_blob
+from .schemas import (
+    EnrollRequest,
+    KeyslotPut,
+    PushRequest,
+    RotateTokenRequest,
+    decode_blob,
+    encode_blob,
+)
 from .security import (
     client_ip,
     create_enrollment_code,
@@ -246,11 +253,28 @@ def list_devices(request: Request, device_id: DeviceId):
 
 # Declared before /v1/devices/{target_id} so "self" is never read as an id.
 @router.post("/v1/devices/self/rotate-token")
-def rotate_token(request: Request, device_id: DeviceId):
-    token = new_token()
+def rotate_token(request: Request, device_id: DeviceId, body: RotateTokenRequest | None = None):
+    """Replace this device's token.
+
+    Preferred: the client sends the hash of a token it generated and saved
+    beforehand. If the reply is lost, the client simply tries its saved new
+    token. Repeating the call with the same hash is harmless.
+
+    Without a body the server makes the token and returns it (older clients);
+    a lost reply then locks the device out.
+    """
     with request.app.state.db.tx() as s:
-        s.get(Device, device_id).token_hash = sha256_hex(token)
-    return {"token": token}
+        device = s.get(Device, device_id)
+        if body is None:
+            token = new_token()
+            device.token_hash = sha256_hex(token)
+            return {"token": token}
+        if body.token_hash != device.token_hash:
+            taken = s.scalar(select(Device.id).where(Device.token_hash == body.token_hash))
+            if taken is not None:
+                raise ApiError(409, "token_in_use", "choose a different token")
+            device.token_hash = body.token_hash
+    return {"rotated": True}
 
 
 @router.delete("/v1/devices/{target_id}")

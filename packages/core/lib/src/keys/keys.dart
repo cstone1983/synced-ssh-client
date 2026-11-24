@@ -354,6 +354,9 @@ class Keys {
     }
   }
 
+  /// Largest Argon2 memory cost accepted in a .ppk file: 256 MiB, in KiB.
+  static const maxPpkArgon2MemoryKiB = 256 * 1024;
+
   static Uint8List _ppkArgon2(_Ppk ppk, Uint8List pass) {
     final int type;
     switch (ppk.headers['Key-Derivation']) {
@@ -375,9 +378,17 @@ class Keys {
       throw const KeyImportException(
           'The PuTTY key file is missing its Argon2 parameters.');
     }
-    // Refuse parameters that would exhaust memory or hang the app.
+    // Argon2-Memory is in KiB. PuTTYgen's default is 8 MiB; more than
+    // 256 MiB could exhaust a phone and is refused before the KDF runs.
+    if (memory > maxPpkArgon2MemoryKiB) {
+      throw KeyImportException(
+          'This PuTTY key needs ${memory ~/ 1024} MiB of memory to unlock, '
+          'more than the 256 MiB this app allows. Open it in PuTTYgen and '
+          'save it again with a lower Argon2 memory setting (the default is '
+          '8 MiB).');
+    }
+    // Refuse other parameters that would hang the app.
     if (memory < 8 * lanes ||
-        memory > 1024 * 1024 ||
         passes < 1 ||
         passes > 10000 ||
         lanes < 1 ||

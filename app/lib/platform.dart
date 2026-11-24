@@ -36,6 +36,8 @@ class Native {
   }
 }
 
+enum BioRead { ok, missing, failed }
+
 /// Secrets that must be available before the vault is unlocked, or that
 /// unlock it: kept in the OS keystore (Android Keystore / Windows DPAPI).
 class SecureStore {
@@ -43,10 +45,16 @@ class SecureStore {
   static const _bioKey = 'bio_vault_key';
 
   // Android: the key is bound to a Keystore key that only a strong biometric
-  // can release, and reading it shows the system prompt.
+  // can release, and every read shows the system prompt. Without
+  // requireBiometricsPerOperation the plugin keeps the unlocked cipher in
+  // memory after the first prompt, so later unlocks (after auto-lock) would
+  // read the vault key with no prompt at all. Writing (turning it on) asks
+  // too. The Keystore key is invalidated when a fingerprint is added; the
+  // plugin then drops this namespace's data and reads come back empty.
   static const _bio = FlutterSecureStorage(
     aOptions: AndroidOptions.biometric(
       enforceBiometrics: true,
+      requireBiometricsPerOperation: true,
       biometricType: AndroidBiometricType.strongBiometricOnly,
       storageNamespace: 'sshsync_bio',
       biometricPromptTitle: 'Unlock vault',
@@ -95,13 +103,31 @@ class SecureStore {
     }
   }
 
-  Future<String?> readBiometricKey() async {
+  /// [BioRead.missing] means the prompt was passed but no key is stored any
+  /// more (on Android: a fingerprint was added, which invalidates the key).
+  /// [BioRead.failed] means the prompt was cancelled or failed.
+  Future<({BioRead state, String? key})> readBiometricKey() async {
     try {
-      if (Platform.isAndroid) return await _bio.read(key: _bioKey);
-      if (!await _hello('Unlock vault')) return null;
-      return await _plain.read(key: _bioKey);
+      final String? k;
+      if (Platform.isAndroid) {
+        k = await _bio.read(key: _bioKey);
+      } else {
+        if (!await _hello('Unlock vault')) return (state: BioRead.failed, key: null);
+        k = await _plain.read(key: _bioKey);
+      }
+      return k == null || k.isEmpty
+          ? (state: BioRead.missing, key: null)
+          : (state: BioRead.ok, key: k);
+    } on PlatformException catch (e) {
+      // A fingerprint added while the app was running: the plugin only
+      // clears the dead key on its next start, so recognise it here too.
+      final text = '${e.message} ${e.details}';
+      if (text.contains('KeyPermanentlyInvalidated')) {
+        return (state: BioRead.missing, key: null);
+      }
+      return (state: BioRead.failed, key: null);
     } catch (_) {
-      return null;
+      return (state: BioRead.failed, key: null);
     }
   }
 

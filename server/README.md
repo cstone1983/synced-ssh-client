@@ -218,7 +218,9 @@ restores onto a clean install without any server.
 ## Tokens, revoking devices, recovery
 
 - **Rotate a token:** done from the app on the device itself
-  (`POST /v1/devices/self/rotate-token`). The old token stops working at once. Do this if a token may have leaked (for example
+  (`POST /v1/devices/self/rotate-token`). The app makes the new token, saves it, then sends only its SHA-256
+  (`{"token_hash": "<64 hex>"}`), so a lost reply cannot lock the device out: it just tries the saved new token.
+  The old token stops working at once. Do this if a token may have leaked (for example
   after using plain HTTP on a network you do not trust).
 - **Revoke a device:** from the device list in the app on any enrolled device
   (`DELETE /v1/devices/{id}`). The token dies immediately and the device gets `401 device_revoked`. Revoking
@@ -294,7 +296,7 @@ All JSON. Blobs are standard base64. Errors are
 | `GET /v1/pull?since=&limit=` | device | changes after a cursor |
 | `GET /v1/devices` | device | list devices |
 | `DELETE /v1/devices/{id}` | device | revoke a device |
-| `POST /v1/devices/self/rotate-token` | device | new token, old one dies |
+| `POST /v1/devices/self/rotate-token` | device | body `{token_hash}` (client-made token; repeat is harmless), old one dies. Without a body the server makes the token and returns it |
 | `GET /v1/status` | device | server time, record count, cursor |
 
 ## Development

@@ -1,3 +1,4 @@
+import hashlib
 import re
 import uuid
 
@@ -249,6 +250,41 @@ def test_token_rotation(device):
     assert_error(server.client.get("/v1/status", headers=headers), 401, "unauthorized")
     r = server.client.get("/v1/devices", headers=auth(new))
     assert [d["id"] for d in r.json()["devices"] if d["current"]] == [info["device_id"]]
+
+
+def test_token_rotation_with_client_token(device):
+    server, headers, info = device
+    new = "client-made-token-" + "x" * 30
+    h = hashlib.sha256(new.encode()).hexdigest()
+    r = server.client.post("/v1/devices/self/rotate-token", json={"token_hash": h}, headers=headers)
+    assert r.status_code == 200 and r.json() == {"rotated": True}
+    assert "token" not in r.json()
+    assert_error(server.client.get("/v1/status", headers=headers), 401, "unauthorized")
+    assert server.client.get("/v1/status", headers=auth(new)).status_code == 200
+
+    # The reply was lost and the client retries with the new token: harmless.
+    r = server.client.post("/v1/devices/self/rotate-token", json={"token_hash": h}, headers=auth(new))
+    assert r.status_code == 200
+    assert server.client.get("/v1/status", headers=auth(new)).status_code == 200
+
+
+def test_token_rotation_rejects_bad_or_taken_hash(device):
+    server, headers, info = device
+    for bad in ["", "ABC", "g" * 64, "A" * 64, "0" * 63, 5]:
+        r = server.client.post("/v1/devices/self/rotate-token", json={"token_hash": bad}, headers=headers)
+        assert_error(r, 422, "invalid_request")
+    r = server.client.post(
+        "/v1/devices/self/rotate-token", json={"token_hash": "0" * 64, "extra": 1}, headers=headers
+    )
+    assert_error(r, 422, "invalid_request")
+
+    other = server.enroll(code=server.new_code(info["token"]), name="phone", platform="android")
+    taken = hashlib.sha256(other["token"].encode()).hexdigest()
+    r = server.client.post("/v1/devices/self/rotate-token", json={"token_hash": taken}, headers=headers)
+    assert_error(r, 409, "token_in_use")
+    # Nothing changed for either device.
+    assert server.client.get("/v1/status", headers=headers).status_code == 200
+    assert server.client.get("/v1/status", headers=auth(other["token"])).status_code == 200
 
 
 def test_unknown_route_and_method(server):

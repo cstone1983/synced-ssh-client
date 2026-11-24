@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:sshsync_core/sshsync_core.dart';
 import 'package:test/test.dart';
@@ -309,12 +310,68 @@ void main() {
     expect(await Vault(c).verify(onB, 'new passphrase'), isTrue);
     expect(await Vault(c).verify(onB, 'passphrase'), isFalse);
 
-    // A device with the wrong sync key refuses the server.
+    // A device with the wrong sync key warns but keeps syncing records, and
+    // never overwrites the keyslot it cannot read.
     final v = Vault(c)..unlockWithKey(first.exportKey());
     final s = Store.memory(v)..kvSet('keyslot', slot.encode());
     final wrong = SyncEngine(s, server.client('w'), syncKey: SyncKey.generate(c));
-    expect(await wrong.syncOnce(), isFalse);
-    expect(wrong.current.phase, SyncPhase.error);
+    final before = server.keyslot!;
+    expect(await wrong.syncOnce(), isTrue);
+    expect(wrong.current.phase, SyncPhase.idle);
+    expect(wrong.current.keyslotUnreadable, isTrue);
+    expect(server.keyslot, same(before));
+  });
+
+  test('keyslot: an unreadable server keyslot does not stop record sync', () async {
+    final sk = SyncKey.generate(c);
+    Device dev(String n) {
+      final v = Vault(c)..unlockWithKey(first.exportKey());
+      final s = Store.memory(v, now: () => clock += 10);
+      s.kvSet('keyslot', slot.encode());
+      return Device(s, SyncEngine(s, server.client(n), syncKey: sk));
+    }
+
+    final a = dev('a'), b = dev('b');
+    expect(await a.sync(), isTrue);
+    expect(await b.sync(), isTrue);
+
+    // Any device token can replace the keyslot; garbage must not halt sync.
+    server.keyslot = RemoteKeyslot(server.keyslot!.version + 1,
+        Uint8List.fromList(List.filled(80, 7)));
+    final garbage = server.keyslot!;
+    final id = a.store.put('host', {'nickname': 'still-syncs'});
+    expect(await a.sync(), isTrue);
+    expect(a.engine.current.keyslotUnreadable, isTrue);
+    expect(await b.sync(), isTrue);
+    expect(b.store.get(id)!.str('nickname'), 'still-syncs');
+    expect(b.engine.current.keyslotUnreadable, isTrue);
+
+    // A local passphrase change is not uploaded over a keyslot it can't read.
+    final slot2 = await a.store.vault.changePassphrase(slot, 'new passphrase', params: KdfParams.fast);
+    a.store.kvSet('keyslot', slot2.encode());
+    SyncEngine.markKeyslotChanged(a.store);
+    expect(await a.sync(), isTrue);
+    expect(server.keyslot, same(garbage));
+    expect(a.store.kvGet('keyslot_dirty'), '1', reason: 'uploaded once the server is fixed');
+
+    // Once a readable keyslot is back, the warning clears.
+    server.keyslot = RemoteKeyslot(garbage.version + 1, SyncKey.sealKeyslot(c, sk, slot));
+    expect(await b.sync(), isTrue);
+    expect(b.engine.current.keyslotUnreadable, isFalse);
+  });
+
+  test('keyslot: a readable keyslot for a different vault still stops sync', () async {
+    final sk = SyncKey.generate(c);
+    final other = Vault(c);
+    final otherSlot = await other.create('other', params: KdfParams.fast);
+    server.keyslot = RemoteKeyslot(1, SyncKey.sealKeyslot(c, sk, otherSlot));
+    final v = Vault(c)..unlockWithKey(first.exportKey());
+    final s = Store.memory(v)..kvSet('keyslot', slot.encode());
+    s.put('host', {'nickname': 'must-not-leave'});
+    final e = SyncEngine(s, server.client('x'), syncKey: sk);
+    expect(await e.syncOnce(), isFalse);
+    expect(e.current.phase, SyncPhase.error);
+    expect(server.records, isEmpty);
   });
 
   test('backup: round trip into a fresh vault, wrong passphrase and tampering fail', () async {
