@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: ["**"]
+    # A windows-v* tag on main (e.g. windows-v0.1.0) also publishes a GitHub
+    # release with the Windows installer. See docs/RELEASING.md.
+    tags: ["windows-v*"]
   workflow_dispatch:
 
 concurrency:
@@ -110,7 +113,10 @@ jobs:
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
           $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
           if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          & $iscc app\installer\sshsync.iss
+          # On a windows-v* tag the installer takes its version from the tag.
+          $ver = "0.1.0"
+          if ($env:GITHUB_REF -like "refs/tags/windows-v*") { $ver = $env:GITHUB_REF_NAME.Substring("windows-v".Length) }
+          & $iscc "/DAppVersion=$ver" app\installer\sshsync.iss
       - uses: actions/upload-artifact@v4
         with:
           name: sshsync-windows-installer
@@ -119,3 +125,26 @@ jobs:
         with:
           name: sshsync-windows-portable
           path: app/build/windows/x64/runner/Release
+
+  windows-release:
+    if: startsWith(github.ref, 'refs/tags/windows-v')
+    needs: [server, core, server-image, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sshsync-windows-installer
+          path: installer
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver="${GITHUB_REF_NAME#windows-v}"
+          prerelease=""
+          case "$ver" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" installer/*.exe \
+            --repo "$GITHUB_REPOSITORY" --verify-tag $prerelease \
+            --title "SSH Sync for Windows $ver" \
+            --notes "Windows installer built from $GITHUB_SHA."
