@@ -346,6 +346,19 @@ class SyncService {
     });
   }
 
+  /// Ask the server to send a one-time code to its owner's Telegram.
+  Future<void> requestCode(String url, String deviceName,
+      {bool allowInsecure = false, String? pin}) async {
+    final problem = checkUrl(url, allowInsecure);
+    if (problem != null) throw StateError(problem);
+    final client = (pin == null || pin.isEmpty) ? null : HttpSyncApi.pinnedClient(pin);
+    try {
+      await HttpSyncApi.requestEnrollmentCode(url, deviceName, _platform, client: client);
+    } finally {
+      client?.close();
+    }
+  }
+
   /// Connect this (unlocked) device to a server. If the server already holds
   /// a vault, [syncKeyText] is required and must open it.
   Future<void> enroll(String url, String code, String deviceName,

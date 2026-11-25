@@ -23,7 +23,8 @@ delete everything. It cannot read or forge records. Keep your own backups.
 
 Device tokens and enrollment codes are stored only as SHA-256 hashes, and are
 never written to the log. The single exception is the enrollment code the
-server prints for you on first start (and when you ask for one on the CLI).
+server prints for you on first start (and when you ask for one on the CLI). A
+code requested from the app goes only to the webhook, never to the log.
 
 ## Quick start on a Linux VM
 
@@ -54,6 +55,28 @@ docker compose exec server sshsync enroll-code
 
 Later devices are added from an already enrolled device (the app creates the
 code and shows it as a QR code).
+
+### Codes by Telegram (optional)
+
+Instead of reading the log, a device can ask the server to send a code to you.
+In the app, enter the server address and tap **Send code to Telegram**; type
+the code that arrives and connect. The server never holds a Telegram token: it
+POSTs to a webhook (for example an n8n workflow that owns the bot) and the
+webhook sends the message. Set:
+
+```yaml
+environment:
+  SSHSYNC_NOTIFY_URL: http://n8n:5678/webhook/<path>
+  SSHSYNC_NOTIFY_KEY_FILE: /run/secrets/sshsync_notify_key   # or SSHSYNC_NOTIFY_KEY
+```
+
+The webhook gets `POST` JSON `{code, expires_minutes, device_name, platform,
+ip}` with the key in the `X-Sshsync-Key` header, and must answer 2xx only once
+the message is on its way. The device that asked never sees the code, the
+answer is the same whatever devices exist, a code that could not be delivered
+is deleted at once, and requests are limited to 3 a minute per address and 10
+an hour in total. A second device that joins an existing vault still needs the
+sync key, so the QR from an enrolled device stays the easy way for that.
 
 By default the port is published on `127.0.0.1:8080` only. The server speaks
 plain HTTP, so do one of the following before pointing a device at it:
@@ -261,6 +284,8 @@ version changed the schema (release notes will say so).
 | `SSHSYNC_TRUSTED_PROXIES` | empty | Comma-separated IPs/CIDRs of reverse proxies. `X-Forwarded-For` is used for rate-limit keying only when the connection comes from one of them. |
 | `SSHSYNC_RATE_LIMIT` | `on` | `on` or `off`. Leave on outside of tests. |
 | `SSHSYNC_CODE_TTL_SECONDS` | `600` | Lifetime of an enrollment code. |
+| `SSHSYNC_NOTIFY_URL` | empty | Webhook that delivers requested enrollment codes (see "Codes by Telegram"). Empty = code requests are off. |
+| `SSHSYNC_NOTIFY_KEY` / `SSHSYNC_NOTIFY_KEY_FILE` | empty | Shared key sent in `X-Sshsync-Key`; the `_FILE` form reads it from a file. Required with the URL. |
 | `SSHSYNC_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. `WARNING` hides the per-request lines. |
 
 Rate limits (per minute): 5 enrollment attempts per IP, 10 failed
@@ -291,6 +316,7 @@ All JSON. Blobs are standard base64. Errors are
 | `GET /healthz` | none | liveness |
 | `POST /v1/enroll` | one-time code | enroll a device, returns its token once |
 | `POST /v1/enrollment-codes` | device | create a single-use code |
+| `POST /v1/enrollment-codes/request` | none | body `{device_name, platform}`: send a single-use code to the owner through the webhook (`202`; `404 not_available` when no webhook is set) |
 | `GET` / `PUT /v1/keyslot` | device | sealed keyslot, versioned |
 | `POST /v1/push` | device | batch of changes, accepted or rejected per item |
 | `GET /v1/pull?since=&limit=` | device | changes after a cursor |

@@ -309,8 +309,8 @@ class _JoinScreenState extends State<JoinScreen> {
   final url = TextEditingController(), code = TextEditingController(), sk = TextEditingController();
   final pass = TextEditingController(), pin = TextEditingController();
   late final name = TextEditingController(text: _defaultName());
-  bool insecure = false, busy = false, advanced = false;
-  String? error;
+  bool insecure = false, busy = false, advanced = false, sending = false;
+  String? error, sent;
 
   static String _defaultName() {
     try {
@@ -334,6 +334,46 @@ class _JoinScreenState extends State<JoinScreen> {
     final j = SyncService.parseInvite(text);
     if (j == null) return toast(context, 'That is not an SSH Sync enrollment code.');
     _applyInvite(j);
+  }
+
+  void _fail(String message) {
+    if (mounted) setState(() => error = message);
+  }
+
+  /// The server sends a one-time code to its owner's Telegram; the user types
+  /// it in below. Needs only the server address.
+  Future<void> _requestCode() async {
+    final sync = App.i.sync;
+    final problem = sync.checkUrl(url.text, insecure);
+    if (problem != null) return setState(() => error = problem);
+    var deviceName = name.text.trim().isEmpty ? _defaultName() : name.text.trim();
+    if (deviceName.length > 64) deviceName = deviceName.substring(0, 64);
+    setState(() {
+      sending = true;
+      error = null;
+      sent = null;
+    });
+    try {
+      await sync.requestCode(url.text, deviceName, allowInsecure: insecure, pin: pin.text.trim());
+      if (mounted) setState(() => sent = 'Code sent. Check Telegram and type it below.');
+    } on ApiException catch (e) {
+      _fail(switch (e.code) {
+        'not_available' => 'This server is not set up to send codes. Run "sshsync enroll-code" on the server instead.',
+        'not_found' => 'This server is too old to send codes. Update it, or run "sshsync enroll-code" on the server.',
+        'rate_limited' => 'Too many codes requested. Wait a few minutes and try again.',
+        'notify_failed' => 'The server could not send the code. Try again in a moment.',
+        _ => e.message,
+      });
+    } on OfflineException {
+      _fail('Could not reach the server. Check the address'
+          '${pin.text.isEmpty ? ' (a self-signed certificate needs its fingerprint under Advanced)' : ''}.');
+    } on StateError catch (e) {
+      _fail(e.message);
+    } catch (_) {
+      _fail('Could not request a code.');
+    } finally {
+      if (mounted) setState(() => sending = false);
+    }
   }
 
   Future<void> _go() async {
@@ -412,7 +452,23 @@ class _JoinScreenState extends State<JoinScreen> {
                     autocorrect: false,
                     onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(labelText: 'Server address', hintText: 'https://sync.example.com')),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: busy || sending || url.text.trim().isEmpty ? null : _requestCode,
+                    icon: sending
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.send),
+                    label: const Text('Send code to Telegram'),
+                  ),
+                ),
+                if (sent != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(sent!, style: t.textTheme.bodySmall?.copyWith(color: t.colorScheme.primary)),
+                  ),
+                const SizedBox(height: 4),
                 TextField(
                     controller: code,
                     autocorrect: false,

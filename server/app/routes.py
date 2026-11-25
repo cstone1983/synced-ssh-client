@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from . import config
 from .db import Device, EnrollmentCode, Keyslot, Record, get_meta, get_seq, set_seq
 from .errors import ApiError
+from .notify import NotifyError
 from .schemas import (
+    CodeRequest,
     EnrollRequest,
     KeyslotPut,
     PushRequest,
@@ -29,6 +32,7 @@ from .security import (
 )
 
 router = APIRouter()
+log = logging.getLogger("sshsync")
 
 
 def _rate_limited() -> ApiError:
@@ -123,6 +127,52 @@ def create_code(request: Request, _: DeviceId):
     with st.db.tx() as s:
         code, expires_at = create_enrollment_code(s, st.settings.code_ttl_seconds)
     return {"code": code, "expires_at": expires_at}
+
+
+@router.post("/v1/enrollment-codes/request", status_code=202)
+def request_code(body: CodeRequest, request: Request):
+    """Send a fresh one-time code to the owner (Telegram, via n8n).
+
+    Needs no token: this is how a new device gets in. The caller never sees
+    the code, and the reply is the same whatever devices the server has.
+    """
+    st = request.app.state
+    ip = _ip(request)
+    if not st.limiter.hit(("code_request", ip), st.settings.code_request_per_minute):
+        raise _rate_limited()
+    if st.notify is None:
+        raise ApiError(
+            404,
+            "not_available",
+            "this server cannot send codes; run `sshsync enroll-code` on the server",
+        )
+    if not st.hourly_limiter.hit(("code_request",), st.settings.code_request_per_hour):
+        raise ApiError(
+            429, "rate_limited", "too many codes requested, try again later",
+            headers={"Retry-After": "600"},
+        )
+    ttl = st.settings.code_ttl_seconds
+    with st.db.tx() as s:
+        code, expires_at = create_enrollment_code(s, ttl)
+    payload = {
+        "code": code,
+        "expires_minutes": max(1, round(ttl / 60)),
+        "device_name": body.device_name,
+        "platform": body.platform,
+        "ip": ip,
+    }
+    try:
+        st.notify(payload)
+    except Exception as e:
+        # Nobody received this code, so it must not stay usable.
+        with st.db.tx() as s:
+            code_hash = sha256_hex(normalize_code(code))
+            s.execute(delete(EnrollmentCode).where(EnrollmentCode.code_hash == code_hash))
+        reason = str(e) if isinstance(e, NotifyError) else type(e).__name__
+        log.warning("enrollment code request from %s not delivered: %s", ip, reason)
+        raise ApiError(502, "notify_failed", "the code could not be sent, try again") from None
+    log.info("enrollment code sent for %r (%s) requested from %s", body.device_name, body.platform, ip)
+    return {"sent": True, "expires_at": expires_at}
 
 
 @router.get("/v1/keyslot")

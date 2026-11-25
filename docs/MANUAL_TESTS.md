@@ -54,6 +54,7 @@ logic; this covers what only a device can show. Tick each box per platform.
 - [ ] Export a backup, erase the device, create a new vault, import the backup: everything returns.
 
 ## Sync
+- [ ] Telegram code: on device A enter only the server address, tap "Send code to Telegram"; the code arrives in Telegram naming the device; type it and Connect. A second tap within a minute still works; a fourth is refused as too many.
 - [ ] Connect device A to the server. Add device B by QR and once more by typing the three values.
 - [ ] Host added on A appears on B within about a minute, or at once with "Sync now".
 - [ ] Host key trusted on A is not asked again on B.
