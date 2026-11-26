@@ -86,6 +86,10 @@ void main() {
     await expectLater(HttpSyncApi.enroll(url, code, 'x', 'other'),
         throwsA(isA<ApiException>().having((e) => e.code, 'code', 'invalid_code')));
 
+    // No webhook is set up here, so the server refuses to send codes.
+    await expectLater(HttpSyncApi.requestEnrollmentCode(url, 'phone', 'android'),
+        throwsA(isA<ApiException>().having((e) => e.code, 'code', 'not_available')));
+
     // --- second device: code from A, sync key from the "QR", then passphrase
     final invite = await apiA.createEnrollmentCode();
     final eb = await HttpSyncApi.enroll(url, invite.code, 'phone', 'android');

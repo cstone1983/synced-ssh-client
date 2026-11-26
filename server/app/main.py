@@ -15,6 +15,7 @@ from .config import Settings
 from .db import Database
 from .errors import install_error_handlers
 from .middleware import RequestContextMiddleware
+from .notify import make_notifier
 from .routes import router
 from .security import RateLimiter, create_enrollment_code, needs_bootstrap_code
 
@@ -57,6 +58,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.db = Database(settings.db_path)
     app.state.limiter = RateLimiter(enabled=settings.rate_limit)
+    app.state.hourly_limiter = RateLimiter(enabled=settings.rate_limit, window=3600.0)
+    app.state.notify = make_notifier(settings)
 
     install_error_handlers(app)
     app.add_middleware(RequestContextMiddleware, max_body_bytes=config.MAX_BODY_BYTES)

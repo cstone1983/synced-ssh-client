@@ -24,6 +24,15 @@ def _flag(value: str) -> bool:
     return value.strip().lower() not in ("off", "0", "false", "no", "")
 
 
+def _secret(env, name: str) -> str:
+    """NAME, or the contents of the file named by NAME_FILE (Docker secrets)."""
+    path = env.get(f"{name}_FILE", "").strip()
+    if path:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    return env.get(name, "").strip()
+
+
 def parse_networks(value: str) -> tuple[IPNetwork, ...]:
     return tuple(
         ipaddress.ip_network(part.strip(), strict=False)
@@ -39,10 +48,17 @@ class Settings:
     rate_limit: bool = True
     code_ttl_seconds: int = 600
     log_level: str = "INFO"
+    # Where a requested enrollment code is delivered (an n8n webhook that
+    # forwards it to Telegram). Empty URL = code requests are switched off.
+    notify_url: str = ""
+    notify_key: str = ""
     # Limits per minute. Not exposed as env vars; tests override them.
     enroll_per_minute: int = 5
     auth_fail_per_minute: int = 10
     device_per_minute: int = 600
+    # Code requests: per client address per minute, and in total per hour.
+    code_request_per_minute: int = 3
+    code_request_per_hour: int = 10
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -53,4 +69,6 @@ class Settings:
             rate_limit=_flag(env.get("SSHSYNC_RATE_LIMIT", "on")),
             code_ttl_seconds=int(env.get("SSHSYNC_CODE_TTL_SECONDS", "600")),
             log_level=env.get("SSHSYNC_LOG_LEVEL", "INFO").upper(),
+            notify_url=env.get("SSHSYNC_NOTIFY_URL", "").strip(),
+            notify_key=_secret(env, "SSHSYNC_NOTIFY_KEY"),
         )

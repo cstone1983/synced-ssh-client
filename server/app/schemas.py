@@ -22,6 +22,11 @@ class EnrollRequest(_Model):
     platform: Literal["android", "windows", "linux", "other"]
 
 
+class CodeRequest(_Model):
+    device_name: StrictStr = Field(min_length=1, max_length=64)
+    platform: Literal["android", "windows", "linux", "other"]
+
+
 class KeyslotPut(_Model):
     base_version: StrictInt = Field(ge=0)
     blob: StrictStr

@@ -212,6 +212,22 @@ class HttpSyncApi implements SyncApi {
         j['vault_id'] as String);
   }
 
+  /// Ask the server to send a one-time enrollment code to its owner (by
+  /// Telegram, through the server's webhook). The code is never returned
+  /// here. Throws [ApiException] `not_available` when the server has no
+  /// webhook set up, `rate_limited`, or `notify_failed`.
+  static Future<void> requestEnrollmentCode(
+      String baseUrl, String deviceName, String platform,
+      {http.Client? client}) async {
+    final api = HttpSyncApi(baseUrl, '', client: client);
+    try {
+      await api._send('POST', '/v1/enrollment-codes/request',
+          body: {'device_name': deviceName, 'platform': platform}, auth: false);
+    } finally {
+      if (client == null) api.close();
+    }
+  }
+
   Future<Map<String, dynamic>> _send(String method, String path,
       {Object? body, bool auth = true, Map<String, String>? query}) async {
     final res = await _request(method, path, body, auth ? token : null, query);

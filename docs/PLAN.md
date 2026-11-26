@@ -271,6 +271,7 @@ Single vault, single user. FastAPI + SQLite (WAL) in one container, one volume.
 | `GET /healthz` | none | liveness, no data |
 | `POST /v1/enroll` | one-time code | `{code, device_name, platform}` → `{device_id, token, vault_id}` |
 | `POST /v1/enrollment-codes` | device | create a 10-minute single-use code |
+| `POST /v1/enrollment-codes/request` | none | `{device_name, platform}` → `202`; the code goes to the owner's Telegram via a webhook, never to the caller |
 | `GET/PUT /v1/keyslot` | device | sealed keyslot blob, versioned |
 | `POST /v1/push` | device | batch of changes, per-item accepted/rejected |
 | `GET /v1/pull?since=&limit=` | device | changes after cursor |
