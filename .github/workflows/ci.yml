@@ -161,7 +161,13 @@ jobs:
           ver="${GITHUB_REF_NAME#windows-v}"
           prerelease=""
           case "$ver" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" installer/*.exe installer/*.exe.sha256 \
-            --repo "$GITHUB_REPOSITORY" --verify-tag $prerelease \
-            --title "SSH Sync for Windows $ver" \
-            --notes "Windows installer built from $GITHUB_SHA. SHA-256: $(cut -d' ' -f1 installer/*.exe.sha256)"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # The tag was made with GitHub's "Draft a new release" form: add the files to that release.
+            gh release upload "$GITHUB_REF_NAME" installer/*.exe installer/*.exe.sha256 \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" installer/*.exe installer/*.exe.sha256 \
+              --repo "$GITHUB_REPOSITORY" --verify-tag $prerelease \
+              --title "SSH Sync for Windows $ver" \
+              --notes "Windows installer built from $GITHUB_SHA. SHA-256: $(cut -d' ' -f1 installer/*.exe.sha256)"
+          fi

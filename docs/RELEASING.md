@@ -39,6 +39,12 @@ The checksum catches a broken or swapped download. It does not protect
 against someone who controls this GitHub repository, because they could
 publish both files; the installer is not code-signed.
 
+Without git at hand, GitHub's website works too: Releases > Draft a new
+release > Choose a tag > type `windows-v0.1.0` > "Create new tag on
+publish", target `main`, Publish. CI then adds the installer and its
+`.sha256` to that release once the build passes (about 10 minutes); until
+then the app's updater ignores it.
+
 A version with a dash, like `windows-v0.2.0-beta1`, is marked as a
 pre-release.
 
