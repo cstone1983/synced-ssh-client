@@ -23,6 +23,7 @@ dependencies:
   flutter_foreground_task: ^11.0.3
   win32_registry: ^3.0.3
   url_launcher: ^6.3.0
+  pointycastle: ^4.0.0
 
 dev_dependencies:
   flutter_test:

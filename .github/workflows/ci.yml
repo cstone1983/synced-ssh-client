@@ -103,24 +103,41 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Work out the version
+        shell: pwsh
+        run: |
+          # A windows-v* tag sets the version; otherwise pubspec's (without +build).
+          if ($env:GITHUB_REF -like "refs/tags/windows-v*") {
+            $ver = $env:GITHUB_REF_NAME.Substring("windows-v".Length)
+          } else {
+            $ver = ((Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([^+\s]+)').Matches[0].Groups[1].Value)
+          }
+          if ($ver -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') { throw "Version '$ver' is not like 1.2.3 or 1.2.3-beta1" }
+          "APP_VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - working-directory: app
+        shell: pwsh
         run: |
           flutter pub get
-          flutter build windows --release
+          # APP_VERSION is what the built-in updater compares against GitHub releases.
+          $name = ($env:APP_VERSION -split '-')[0]
+          flutter build windows --release --build-name=$name --dart-define=APP_VERSION=$env:APP_VERSION
       - name: Build installer (Inno Setup)
         shell: pwsh
         run: |
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
           $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
           if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          # On a windows-v* tag the installer takes its version from the tag.
-          $ver = "0.1.0"
-          if ($env:GITHUB_REF -like "refs/tags/windows-v*") { $ver = $env:GITHUB_REF_NAME.Substring("windows-v".Length) }
-          & $iscc "/DAppVersion=$ver" app\installer\sshsync.iss
+          & $iscc "/DAppVersion=$env:APP_VERSION" app\installer\sshsync.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed" }
+          # The updater refuses an installer that does not match this file.
+          Get-ChildItem app\build\installer\*.exe | ForEach-Object {
+            $h = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
+            "$h  $($_.Name)" | Out-File -FilePath "$($_.FullName).sha256" -Encoding ascii -NoNewline
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: sshsync-windows-installer
-          path: app/build/installer/*.exe
+          path: app/build/installer/*
       - uses: actions/upload-artifact@v4
         with:
           name: sshsync-windows-portable
@@ -144,7 +161,7 @@ jobs:
           ver="${GITHUB_REF_NAME#windows-v}"
           prerelease=""
           case "$ver" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" installer/*.exe \
+          gh release create "$GITHUB_REF_NAME" installer/*.exe installer/*.exe.sha256 \
             --repo "$GITHUB_REPOSITORY" --verify-tag $prerelease \
             --title "SSH Sync for Windows $ver" \
-            --notes "Windows installer built from $GITHUB_SHA."
+            --notes "Windows installer built from $GITHUB_SHA. SHA-256: $(cut -d' ' -f1 installer/*.exe.sha256)"

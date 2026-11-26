@@ -15,6 +15,7 @@ final navKey = GlobalKey<NavigatorState>();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await App.start(DialogPrompts(navKey));
+  Native.listen();
   runApp(const SshSyncApp());
 }
 
@@ -28,6 +29,7 @@ class _SshSyncAppState extends State<SshSyncApp> with WidgetsBindingObserver {
   final app = App.i;
   DateTime? _leftAt;
   Timer? _lockTimer;
+  Timer? _idleTimer;
   bool _wasUnlocked = false;
 
   @override
@@ -36,13 +38,30 @@ class _SshSyncAppState extends State<SshSyncApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     app.addListener(_changed);
     _applySecure();
+    if (Platform.isWindows) {
+      // Windows: also lock when the PC locks, and after the auto-lock time
+      // with no keyboard or mouse input, even with the window in front.
+      Native.onSessionLocked = () {
+        if (app.setting<int>('auto_lock_minutes') > 0) app.lock();
+      };
+      _idleTimer = Timer.periodic(const Duration(seconds: 20), (_) => _checkIdle());
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     app.removeListener(_changed);
+    _idleTimer?.cancel();
+    Native.onSessionLocked = null;
     super.dispose();
+  }
+
+  Future<void> _checkIdle() async {
+    final minutes = app.setting<int>('auto_lock_minutes');
+    if (minutes <= 0 || !app.unlocked) return;
+    final idle = await Native.idleSeconds();
+    if (idle != null && idle >= minutes * 60) app.lock();
   }
 
   void _changed() {
@@ -63,7 +82,8 @@ class _SshSyncAppState extends State<SshSyncApp> with WidgetsBindingObserver {
   }
 
   /// Auto-lock: after the configured time away from the app, wipe the key.
-  /// On Android "away" is backgrounded; on desktop it is minimised/hidden.
+  /// On Android "away" is backgrounded; on desktop it is minimised/hidden
+  /// (idle time and the Windows lock screen are handled above).
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final minutes = app.setting<int>('auto_lock_minutes');
