@@ -48,7 +48,13 @@ class App extends ChangeNotifier {
     final dir = directory ?? (await getApplicationSupportDirectory()).path;
     Directory(dir).createSync(recursive: true);
     final store = Store.open('$dir/sshsync.db', vault);
-    return i = App._(crypto, vault, store, SessionManager(store, prompts));
+    final app = i = App._(crypto, vault, store, SessionManager(store, prompts));
+    if (Platform.isWindows) {
+      // Windows Hello unlock was removed: drop any key an earlier build left.
+      await app.secure.clearBiometricKey();
+      if (store.kvGet('biometric') != null) store.kvSet('biometric', null);
+    }
+    return app;
   }
 
   /// Tell listeners something outside the store changed.
@@ -171,6 +177,7 @@ class App extends ChangeNotifier {
     'sync_interval': 60,
     'secure_everywhere': false,
     'volume_zoom': false,
+    'update_check': true,
   };
 
   /// Synced settings are records (so they follow you); the rest are local.

@@ -1,5 +1,9 @@
 #include "flutter_window.h"
 
+#include <flutter/standard_method_codec.h>
+#include <wtsapi32.h>
+
+#include <cstdint>
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -27,6 +31,34 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "sshsync/platform",
+      &flutter::StandardMethodCodec::GetInstance());
+  channel_->SetMethodCallHandler(
+      [](const flutter::MethodCall<flutter::EncodableValue>& call,
+         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+             result) {
+        if (call.method_name() == "idleSeconds") {
+          LASTINPUTINFO info{};
+          info.cbSize = sizeof(info);
+          if (!GetLastInputInfo(&info)) {
+            result->Error("unavailable", "GetLastInputInfo failed");
+            return;
+          }
+          // Both are 32-bit tick counts; unsigned subtraction survives the
+          // 49-day wrap.
+          const DWORD idle_ms = GetTickCount() - info.dwTime;
+          result->Success(
+              flutter::EncodableValue(static_cast<int64_t>(idle_ms / 1000)));
+          return;
+        }
+        result->NotImplemented();
+      });
+
+  // WM_WTSSESSION_CHANGE tells us when this Windows session locks.
+  session_notifications_ =
+      WTSRegisterSessionNotification(GetHandle(), NOTIFY_FOR_THIS_SESSION);
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -40,6 +72,11 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (session_notifications_) {
+    WTSUnRegisterSessionNotification(GetHandle());
+    session_notifications_ = false;
+  }
+  channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -64,6 +101,11 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   switch (message) {
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
+      break;
+    case WM_WTSSESSION_CHANGE:
+      if (wparam == WTS_SESSION_LOCK && channel_) {
+        channel_->InvokeMethod("sessionLocked", nullptr);
+      }
       break;
   }
 

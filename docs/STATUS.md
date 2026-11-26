@@ -26,7 +26,8 @@ Total: 110 core tests, 51 server tests, 2 app tests.
   notification, biometric unlock through the Keystore, FLAG_SECURE, the
   sensitive-clipboard flag, QR scanning, the on-screen keyboard and extra-keys
   row, Doze behaviour.
-- Anything Windows-specific at run time: Windows Hello, DPAPI storage, PuTTY
+- Anything Windows-specific at run time: idle and Win+L auto-lock, the
+  built-in updater, DPAPI storage, PuTTY
   registry import, the installer.
 - Whether sessions survive swiping the app out of recents on Android. The
   service keeps the process alive, but Android may still destroy the Flutter

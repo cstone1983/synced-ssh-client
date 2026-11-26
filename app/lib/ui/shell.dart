@@ -8,6 +8,7 @@ import 'hosts.dart';
 import 'settings.dart';
 import 'sync.dart';
 import 'terminal.dart';
+import 'update.dart';
 import 'vault.dart';
 
 /// Adaptive frame: bottom navigation on phones, sidebar + tabs on wide
@@ -27,6 +28,11 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    if (Platform.isWindows) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) checkForUpdatesOnStart(context);
+      });
+    }
     final n = app.interruptedSessions;
     if (n > 0) {
       app.interruptedSessions = 0;

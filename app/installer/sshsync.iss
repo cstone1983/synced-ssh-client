@@ -1,6 +1,9 @@
 ; Inno Setup script for the Windows build.
 ; Build the app first (flutter build windows --release), then:
 ;   iscc /DAppVersion=0.1.0 app\installer\sshsync.iss
+; CI passes the version (the windows-v tag, or pubspec's version).
+; The app's built-in updater runs this installer with /SILENT /UPDATE=1: it
+; upgrades the existing install in place and starts the app again.
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
@@ -36,3 +39,10 @@ Name: "{autodesktop}\SSH Sync"; Filename: "{app}\sshsync.exe"; Tasks: desktopico
 
 [Run]
 Filename: "{app}\sshsync.exe"; Description: "Start SSH Sync"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\sshsync.exe"; Flags: nowait runasoriginaluser; Check: IsAppUpdate
+
+[Code]
+function IsAppUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:UPDATE|0}') = '1');
+end;

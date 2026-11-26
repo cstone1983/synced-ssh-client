@@ -8,8 +8,10 @@ import 'package:sshsync_core/sshsync_core.dart';
 import '../platform.dart';
 import '../services.dart';
 import '../theme.dart';
+import '../updater.dart';
 import 'dialogs.dart';
 import 'onboarding.dart';
+import 'update.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -159,14 +161,16 @@ class SettingsScreen extends StatelessWidget {
                     choice<int>('Default keepalive', 'keepalive', const {0: 'Off', 15: '15 s', 30: '30 s', 60: '60 s', 120: '2 min'}),
                     section('Security'),
                     choice<int>('Auto-lock after', 'auto_lock_minutes', const {1: '1 minute', 5: '5 minutes', 15: '15 minutes', 60: '1 hour', 0: 'Never'},
-                        subtitle: Platform.isAndroid ? 'Time in the background' : 'Time minimised'),
+                        subtitle: Platform.isAndroid
+                            ? 'Time in the background'
+                            : Platform.isWindows
+                                ? 'Time minimised or with no keyboard or mouse use. Locking Windows locks the vault too.'
+                                : 'Time minimised'),
                     if (SecureStore.biometricsPossible)
                       SwitchListTile(
-                        title: Text(Platform.isWindows ? 'Unlock with Windows Hello' : 'Unlock with fingerprint or face'),
-                        subtitle: Text(Platform.isWindows
-                            ? 'Convenience only: Windows releases the stored key to any program running as you. Hello guards the keyboard, not the disk.'
-                            : 'The vault key is held by the Android Keystore and released only by a strong biometric, asked for on every unlock. '
-                                'Adding a fingerprint to the phone turns this off.'),
+                        title: const Text('Unlock with fingerprint or face'),
+                        subtitle: const Text('The vault key is held by the Android Keystore and released only by a strong biometric, asked for on every unlock. '
+                            'Adding a fingerprint to the phone turns this off.'),
                         isThreeLine: true,
                         value: app.biometricEnabled,
                         onChanged: (v) async {
@@ -206,6 +210,19 @@ class SettingsScreen extends StatelessWidget {
                     section('Sync'),
                     choice<int>('Sync every', 'sync_interval', const {30: '30 s', 60: '1 minute', 300: '5 minutes', 900: '15 minutes'},
                         subtitle: 'While the app is open and unlocked. Server address is on the Sync screen.'),
+                    if (Platform.isWindows) ...[
+                      section('Updates'),
+                      ListTile(
+                        title: const Text('Check for updates'),
+                        subtitle: Text('Version $appVersion. New versions come from GitHub releases.'),
+                        leading: const Icon(Icons.system_update_alt),
+                        onTap: () => checkForUpdatesNow(context),
+                      ),
+                      SwitchListTile(
+                          title: const Text('Check when the app starts'),
+                          value: app.setting<bool>('update_check'),
+                          onChanged: (v) => app.setSetting('update_check', v)),
+                    ],
                     section('Backup'),
                     const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),

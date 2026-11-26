@@ -6,9 +6,34 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 
-/// Small native helpers (Android only; no-ops elsewhere).
+/// Small native helpers. Android: screenshots and the clipboard. Windows:
+/// idle time and the Windows lock screen (app/windows/runner).
 class Native {
   static const _ch = MethodChannel('sshsync/platform');
+
+  /// Windows: called when the Windows session is locked (Win+L, lid, idle
+  /// lock screen).
+  static void Function()? onSessionLocked;
+
+  /// Starts listening for calls from the native side. Call once at start.
+  static void listen() {
+    if (!Platform.isWindows) return;
+    _ch.setMethodCallHandler((call) async {
+      if (call.method == 'sessionLocked') onSessionLocked?.call();
+      return null;
+    });
+  }
+
+  /// Windows: seconds since the last keyboard or mouse input anywhere on
+  /// the PC. Null elsewhere or if it cannot be read.
+  static Future<int?> idleSeconds() async {
+    if (!Platform.isWindows) return null;
+    try {
+      return await _ch.invokeMethod<int>('idleSeconds');
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// FLAG_SECURE: blocks screenshots and hides the app in the recents view.
   static Future<void> setSecure(bool on) async {
@@ -78,7 +103,10 @@ class SecureStore {
     }
   }
 
-  static bool get biometricsPossible => Platform.isAndroid || Platform.isWindows;
+  // Windows Hello is off for now: local_auth only asks Hello yes or no, so
+  // the vault key would sit in Credential Manager readable by any program
+  // running as you. A Hello-bound key (KeyCredentialManager) comes later.
+  static bool get biometricsPossible => Platform.isAndroid;
 
   Future<bool> biometricsAvailable() async {
     if (!biometricsPossible) return false;
@@ -91,16 +119,8 @@ class SecureStore {
   }
 
   Future<void> storeBiometricKey(String keyBase64) async {
-    if (Platform.isAndroid) {
-      await _bio.write(key: _bioKey, value: keyBase64);
-    } else {
-      // Windows: DPAPI protects the value for this Windows user; Windows
-      // Hello is asked before reading, but it is a gate, not a key.
-      if (!await _hello('Enable Windows Hello unlock')) {
-        throw Exception('not confirmed');
-      }
-      await _plain.write(key: _bioKey, value: keyBase64);
-    }
+    if (!Platform.isAndroid) throw UnsupportedError('biometric unlock is Android only');
+    await _bio.write(key: _bioKey, value: keyBase64);
   }
 
   /// [BioRead.missing] means the prompt was passed but no key is stored any
@@ -108,13 +128,8 @@ class SecureStore {
   /// [BioRead.failed] means the prompt was cancelled or failed.
   Future<({BioRead state, String? key})> readBiometricKey() async {
     try {
-      final String? k;
-      if (Platform.isAndroid) {
-        k = await _bio.read(key: _bioKey);
-      } else {
-        if (!await _hello('Unlock vault')) return (state: BioRead.failed, key: null);
-        k = await _plain.read(key: _bioKey);
-      }
+      if (!Platform.isAndroid) return (state: BioRead.failed, key: null);
+      final k = await _bio.read(key: _bioKey);
       return k == null || k.isEmpty
           ? (state: BioRead.missing, key: null)
           : (state: BioRead.ok, key: k);
@@ -131,19 +146,12 @@ class SecureStore {
     }
   }
 
+  /// On Windows this removes a key stored by an earlier build that had the
+  /// Hello switch (kept in Credential Manager under the same name).
   Future<void> clearBiometricKey() async {
     try {
       await (Platform.isAndroid ? _bio : _plain).delete(key: _bioKey);
     } catch (_) {}
-  }
-
-  Future<bool> _hello(String reason) async {
-    try {
-      return await LocalAuthentication()
-          .authenticate(localizedReason: reason, biometricOnly: false);
-    } catch (_) {
-      return false;
-    }
   }
 }
 

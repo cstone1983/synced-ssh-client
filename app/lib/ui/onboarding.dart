@@ -289,7 +289,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
         OutlinedButton.icon(
           onPressed: busy ? null : _biometric,
           icon: const Icon(Icons.fingerprint),
-          label: Text(Platform.isWindows ? 'Use Windows Hello' : 'Use fingerprint or face'),
+          label: const Text('Use fingerprint or face'),
         ),
       ],
     ]);

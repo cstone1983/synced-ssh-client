@@ -43,7 +43,7 @@ logic; this covers what only a device can show. Tick each box per platform.
 ## Vault
 - [ ] Import an OpenSSH key (encrypted and not) and a PuTTY `.ppk`; copy/export the public key.
 - [ ] Auto-lock: set 1 minute, background the app for 2 minutes: locked on return, sessions still running.
-- [ ] Biometric unlock on Android (fingerprint) and Windows (Hello).
+- [ ] Biometric unlock on Android (fingerprint). Windows: there is no Windows Hello switch in Settings or on the unlock screen.
 - [ ] Android fingerprint, every unlock: turn it on (it asks once), lock, unlock: asked. Background past auto-lock and come back five times: asked every time, never unlocked silently. Repeat with an SSH session open (the foreground service keeps the app alive).
 - [ ] Android: force-stop the app, open it: asked again.
 - [ ] Android: add a fingerprint in the phone's Settings, open the app: it says fingerprint unlock was reset, the passphrase works, the switch is off in Settings, and sync still works (its token was not touched).
@@ -63,6 +63,14 @@ logic; this covers what only a device can show. Tick each box per platform.
 - [ ] `http://` to a public address is refused; `http://` to a LAN address needs the explicit switch and shows a permanent warning.
 - [ ] Revoke B from A: B shows "revoked", keeps its data, and stops syncing.
 - [ ] Change the passphrase on A; after B syncs, B unlocks with the new one only.
+
+## Windows lock and updates
+- [ ] Auto-lock 1 minute, window in front, no mouse or keyboard for 2 minutes: the vault locks; open sessions keep running.
+- [ ] Press Win+L, sign back in: the vault is locked. With auto-lock set to Never it stays unlocked.
+- [ ] Settings shows the version (the tag's, e.g. 0.1.0, not "dev"). "Check for updates" with nothing newer says you have the newest version.
+- [ ] Once a newer windows-v release exists: start the app, it offers the update after unlock; Install downloads, closes the app, upgrades in place without questions and starts it again; vault, hosts and settings are unchanged; Settings shows the new version.
+- [ ] Turn off "Check when the app starts": no offer on the next start; the Settings button still works.
+- [ ] Offline: no error on start; the Settings button says it could not check.
 
 ## Import (Windows)
 - [ ] "Import from PuTTY" brings in saved sessions and their `.ppk` keys.
